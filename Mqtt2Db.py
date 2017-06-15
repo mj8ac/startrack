@@ -18,7 +18,7 @@ def registerLogger(macAddress):
 def logGpsData(gpsData):
         #msg = pynmea2.parse(gpsData)
         
-        addGps = ("INSERT INTO gpsData(loggerID, protocolHeader, utc, lat, ns_indicator, lon, ew_indicator, fs, noSv, hdop, uMsl, altRef, uSep, diffAge, diffStation, cs) VALUES(%(loggerID)s, %(protocolHeader)s, %(utc)s, %(lat)s, %(ns_indicator)s, %(lon)s, %(ew_indicator)s, %(fs)s, %(noSv)s, %(hdop)s, %(uMsl)s, %(altRef)s, %(uSep)s, %(diffAge)s, %(diffStation)s, %(cs)s)")
+        addGps = ("INSERT INTO gpsData(loggerID, protocolHeader, utc, lat, ns_indicator, lon, ew_indicator, fs, noSv, hdop, uMsl, altRef, uSep, diffAge, diffStation, cs, msl) VALUES(%(loggerID)s, %(protocolHeader)s, %(utc)s, %(lat)s, %(ns_indicator)s, %(lon)s, %(ew_indicator)s, %(fs)s, %(noSv)s, %(hdop)s, %(uMsl)s, %(altRef)s, %(uSep)s, %(diffAge)s, %(diffStation)s, %(cs)s), %(msl)s")
     
         data_gps = {
                 'loggerID': 1, 
