@@ -14,12 +14,14 @@ const char* ssid = "VM4010643";
 //const char* ssid = "TNCAP39BADF";
 const char* password = "Xj3jzhqpjLsr";
 //const char* password = "36F8BA6FEE";
-const char* mqtt_server = "192.168.0.16";
+const char* mqtt_server = "mirzahome.duckdns.org";
 //const char* mqtt_server = "192.168.1.140";
 byte    mac[6];
 char    macAddr[12];
 String  rxData;
 String  jsonStr;
+String  gpsJson;
+String  macJson;
 char    rxChar;
 bool    newScen = false;
 bool    GPGGA   = false;
@@ -39,7 +41,7 @@ void setup()
   Serial.begin(GPSBaud);
   //swSer.begin(GPSBaud);
   setup_wifi();
-  client.setServer(mqtt_server, 1883);
+  client.setServer(mqtt_server, 1884);
   //client.setCallback(callback);
   reconnect();
 }
@@ -65,6 +67,7 @@ void setup_wifi() {
   for (i = 5; i >= 0; i--) {
     sprintf(macAddr + (j * 2), "%02X", mac[i]);
     j++;
+    //macAddr += mac[i];
   }
 }
 
@@ -129,23 +132,26 @@ void loop()
     }
     else {
       if (newScen) {
-        rxData += rxChar;
+        if (rxChar != '\n'){
+          rxData += rxChar;
+        }
         if (rxData == "$GPGGA") {
           GPGGA = true;
         }
         if (rxChar == '\n') {
           if (GPGGA) {
-            jsonStr = "{\"gps\":\"" + rxData + "\"," + "\"mac\":" + macAddr + "}";
+            jsonStr += macAddr; 
+            jsonStr += "," + rxData;
             //Serial.println(jsonStr);
             client.publish("gps/data", jsonStr.c_str());
             GPGGA = false;
           }
           rxData = "";
+          jsonStr = "";
         }
       }
     }
   }
-
   // Dispatch incoming characters
 
 }
