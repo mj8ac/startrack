@@ -82,7 +82,7 @@ def connectToDb():
 	global cnx 
 	global cursor
 	try:
-		cnx = mysql.connector.connect(user='pi', password='J9a5cxec', host='mirzahome.duckdns.org', database='PLAYER_GPS_DATA')
+		cnx = mysql.connector.connect(user='pi', password='J9a5cxec', host='localhost', database='PLAYER_GPS_DATA')
 		cursor = cnx.cursor()
 	except mysql.connector.Error as err:
 		if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
@@ -99,7 +99,7 @@ client.on_message = on_message
 
 
 connectToDb()
-client.connect("mirzahome.duckdns.org", 1884, 60)
+client.connect("localhost", 1883, 60)
 
 # Blocking call that processes network traffic, dispatches callbacks and
 # handles reconnecting.
