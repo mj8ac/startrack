@@ -12,11 +12,12 @@ static const uint32_t GPSBaud = 9600;
 // Connect to the WiFi
 //const char* ssid = "VM4010643";
 //const char* ssid = "TNCAP39BADF";
-const char* ssid = "Jonathan's iPhone";
+//const char* ssid = "Jonathan's iPhone";
+const char* ssid = "alfa";
 //const char* password = "Xj3jzhqpjLsr";
 //const char* password = "36F8BA6FEE";
 const char* password = "J9a5cxec";
-const char* mqtt_server = "mirzahome.duckdns.org";
+const char* mqtt_server = "192.168.20.1";
 //const char* mqtt_server = "192.168.1.140";
 byte    mac[6];
 char    macAddr[12];
