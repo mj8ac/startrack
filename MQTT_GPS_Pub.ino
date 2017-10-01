@@ -13,11 +13,11 @@ static const uint32_t GPSBaud = 9600;
 //const char* ssid = "VM4010643";
 //const char* ssid = "TNCAP39BADF";
 //const char* ssid = "Jonathan's iPhone";
-const char* ssid = "alfa";
+const char* ssid = "ST01";
 //const char* password = "Xj3jzhqpjLsr";
 //const char* password = "36F8BA6FEE";
 const char* password = "J9a5cxec";
-const char* mqtt_server = "192.168.20.1";
+const char* mqtt_server = "192.168.42.1";
 //const char* mqtt_server = "192.168.1.140";
 byte    mac[6];
 char    macAddr[12];
@@ -44,7 +44,7 @@ void setup()
   Serial.begin(GPSBaud);
   //swSer.begin(GPSBaud);
   setup_wifi();
-  client.setServer(mqtt_server, 1884);
+  client.setServer(mqtt_server, 1883);
   //client.setCallback(callback);
   reconnect();
 }
