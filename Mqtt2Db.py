@@ -83,11 +83,11 @@ def on_message(client, userdata, msg):
 			print "some sort of error with gps scentence"
 		else:
 			logGpsData(gps, macAddress)
-			if dictGpsLoggers.has_key(macAddress) == False:
-				loggerCount+=1
-				dictGpsLoggers[macAddress] = loggerCount
-			else:
-				print("Logger " + dictGpsLoggers[macAddress] + "is alive")
+			#if dictGpsLoggers.has_key(macAddress) == False:
+			#	loggerCount+=1
+			#	dictGpsLoggers[macAddress] = loggerCount
+			#else:
+			#	print("Logger " + dictGpsLoggers[macAddress] + "is alive")
 			
 	elif msg.topic == "gps/switch/off":
 		client.disconnect()
