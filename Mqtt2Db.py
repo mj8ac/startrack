@@ -1,4 +1,4 @@
-import paho.mqtt.client as mqtt
+import paho.mqtt.client as mqtt			
 import pynmea2
 import datetime
 import mysql.connector
@@ -8,6 +8,14 @@ from mysql.connector import errorcode
 cnx = ""
 cursor = ""
 client = ""
+
+#check if the loggers are still alive...
+logger1IsAlive = False
+logger2IsAlive = False
+
+#associate the logger with a mac address
+dictGpsLoggers = {}
+loggerCount = 0
 # Register a new GPS logger in the database
 def registerLogger(macAddress):
 	add_logger = ("INSERT INTO gpsLogger(macAddress) VALUES (%s)")
@@ -75,6 +83,12 @@ def on_message(client, userdata, msg):
 			print "some sort of error with gps scentence"
 		else:
 			logGpsData(gps, macAddress)
+			#if dictGpsLoggers.has_key(macAddress) == False:
+			#	loggerCount+=1
+			#	dictGpsLoggers[macAddress] = loggerCount
+			#else:
+			#	print("Logger " + dictGpsLoggers[macAddress] + "is alive")
+			
 	elif msg.topic == "gps/switch/off":
 		client.disconnect()
 
