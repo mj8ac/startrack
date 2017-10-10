@@ -9,13 +9,7 @@ cnx = ""
 cursor = ""
 client = ""
 
-#check if the loggers are still alive...
-logger1IsAlive = False
-logger2IsAlive = False
 
-#associate the logger with a mac address
-dictGpsLoggers = {}
-loggerCount = 0
 # Register a new GPS logger in the database
 def registerLogger(macAddress):
 	add_logger = ("INSERT INTO gpsLogger(macAddress) VALUES (%s)")
@@ -83,12 +77,7 @@ def on_message(client, userdata, msg):
 			print "some sort of error with gps scentence"
 		else:
 			logGpsData(gps, macAddress)
-			#if dictGpsLoggers.has_key(macAddress) == False:
-			#	loggerCount+=1
-			#	dictGpsLoggers[macAddress] = loggerCount
-			#else:
-			#	print("Logger " + dictGpsLoggers[macAddress] + "is alive")
-			
+
 	elif msg.topic == "gps/switch/off":
 		client.disconnect()
 
@@ -105,7 +94,39 @@ def connectToDb():
 			print("Database does not exist")
 		else:
 			print(err)
-
+			
+class Player:
+	def __init__(self):
+		
+	def getSpeed(slef):
+	
+	def getAvgSpeed(self):
+	
+	def getDistance(self):
+	
+	def getTimeInOwnHalf(self):
+	
+	def getTimeInOwn22(slef):
+	
+	def getTimeInRedZone(self):
+	
+	def getTimeInOppHalf(self):
+	
+	def getTimeInOpp22(self):
+	
+	def getTimeInOppRedZone(self):
+	
+	def updatePosition(self, lat, long, time):
+	
+	def distanceToOwnTryLine(self):
+	
+	def distanceToOppTryLine(self):
+	
+	def getNetDistance(self):
+	
+	def getLastFivePositions(self):
+	
+	def getLast10Positions(self):
 
 client = mqtt.Client()
 client.on_connect = on_connect

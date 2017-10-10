@@ -3,22 +3,24 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
-#include <TinyGPS++.h>
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 // GPS setup
-static const int      RXPin   = 5,    TXPin = 4;
 static const uint32_t GPSBaud = 9600;
 
 // Connect to the WiFi
-//const char* ssid = "VM4010643";
-//const char* ssid = "TNCAP39BADF";
-//const char* ssid = "Jonathan's iPhone";
 const char* ssid = "ST01";
-//const char* password = "Xj3jzhqpjLsr";
-//const char* password = "36F8BA6FEE";
 const char* password = "J9a5cxec";
 const char* mqtt_server = "192.168.42.1";
-//const char* mqtt_server = "192.168.1.140";
+
+const char* host = "OTA-LEDS";
+
+int led_pin = 13;
+#define N_DIMMERS 3
+int dimmer_pin[] = {14, 5, 15};
+
 byte    mac[6];
 char    macAddr[12];
 String  rxData;
@@ -27,41 +29,72 @@ String  gpsJson;
 String  macJson;
 char    rxChar;
 bool    newScen = false;
+bool    updateFlag = false;
 bool    GPGGA   = false;
 
 // The wifi object
 WiFiClient espClient;
 // The MQTT initialisation
 PubSubClient client(espClient);
-// The TinyGPS++ object
-TinyGPSPlus gps;
-// The serial connection to the GPS device
-//SoftwareSerial swSer(RXPin, TXPin);
+
 
 void setup()
 {
-  //Serial.begin(115200);
   Serial.begin(GPSBaud);
-  //swSer.begin(GPSBaud);
+
+   /* switch on led */
+   pinMode(led_pin, OUTPUT);
+   digitalWrite(led_pin, LOW);
+  
   setup_wifi();
+  /* switch off led */
+  digitalWrite(led_pin, HIGH);
+  
   client.setServer(mqtt_server, 1883);
-  //client.setCallback(callback);
+  client.setCallback(callback);
   reconnect();
+
+  /* configure dimmers, and OTA server events */
+  analogWriteRange(1000);
+  analogWrite(led_pin,990);
+
+  for (int i=0; i<N_DIMMERS; i++)
+  {
+    pinMode(dimmer_pin[i], OUTPUT);
+    analogWrite(dimmer_pin[i],50);
+  }
+
+  ArduinoOTA.setHostname(host);
+  ArduinoOTA.onStart([]() { // switch off all the PWMs during upgrade
+                        for(int i=0; i<N_DIMMERS;i++)
+                          analogWrite(dimmer_pin[i], 0);
+                          analogWrite(led_pin,0);
+                    });
+
+  ArduinoOTA.onEnd([]() { // do a fancy thing with our board led at end
+                          for (int i=0;i<30;i++)
+                          {
+                            analogWrite(led_pin,(i*100) % 1001);
+                            delay(50);
+                          }
+                          client.publish("gps/log1/status", "Update complete...");
+                          updateFlag = false;
+                        });
+
+   ArduinoOTA.onError([](ota_error_t error) { ESP.restart(); });
+
+   /* setup the OTA server */
+   ArduinoOTA.begin();
 }
 
 void setup_wifi() {
   delay(10);
-
+  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    //Serial.print(".");
   }
-
-  //Serial.println("");
-  //Serial.println("WiFi connected");
-  //Serial.println("IP address: ");
-  //Serial.println(WiFi.localIP());
+  
   WiFi.macAddress(mac);
 
   int i;
@@ -70,45 +103,27 @@ void setup_wifi() {
   for (i = 5; i >= 0; i--) {
     sprintf(macAddr + (j * 2), "%02X", mac[i]);
     j++;
-    //macAddr += mac[i];
   }
 }
 
 void resetWifi(){
-  //Serial.println("Trying to reconnect to WiFi...");
-  //WiFi.diconnect();
   WiFi.begin(ssid, password);
-  //Serial.println("");
-  //Serial.println("WiFi connected");
-  //Serial.println("IP address: ");
-  //Serial.println(WiFi.localIP());
   return;  
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  //Serial.print("Message arrived [");
-  //Serial.print(topic);
-  //Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    char receivedChar = (char)payload[i];
-    //Serial.print(receivedChar);
+  if (strcmp(topic,"gps/update")==0){
+    updateFlag = true;
   }
-  //Serial.println();
 }
 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
-    //Serial.print("Attempting MQTT connection...");
     if (client.connect("ESP8266 Client")) {
-      //Serial.println("connected");
       // ... and subscribe to topic
-      client.subscribe("test/topic");
+      client.subscribe("gps/update");
     } else {
-      //Serial.print("failed, rc=");
-      //Serial.print(client.state());
-      //Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
       delay(5000);
     }
   }
@@ -118,21 +133,33 @@ void reconnect() {
 void loop()
 {
   client.loop();
+  //client.publish("gps/log1/status", "I'm alive");
+
+  if (updateFlag == true){
+    client.publish("gps/log1/status", "Preparing for update...");
+    for (int i=0; i<1000; i++){
+      ArduinoOTA.handle();
+      delay(10);
+    }
+  }
   
   while (Serial.available() > 0) {
       if (WiFi.status() != WL_CONNECTED){
       setup_wifi();
-  }
+      }
   
   if (!client.connected()) {
       reconnect();
     }
     
     rxChar = Serial.read();
+    //rxData += rxChar;
+    
     if (rxChar == '$') {
       rxData += rxChar;
       newScen = true;
     }
+    
     else {
       if (newScen) {
         if (rxChar != '\n'){
@@ -145,7 +172,6 @@ void loop()
           if (GPGGA) {
             jsonStr += macAddr; 
             jsonStr += "," + rxData;
-            //Serial.println(jsonStr);
             client.publish("gps/data", jsonStr.c_str());
             GPGGA = false;
           }
@@ -155,6 +181,4 @@ void loop()
       }
     }
   }
-  // Dispatch incoming characters
-
 }
