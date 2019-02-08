@@ -14,13 +14,17 @@ static const uint32_t GPSBaud = 9600;
 const char* ssid = "ST01";
 const char* password = "J9a5cxec";
 const char* mqtt_server = "192.168.42.1";
+//const char* mqtt_server = "192.168.1.108";
 
-const char* host = "OTA-LEDS";
+char host[22];
 
 int led_pin = 13;
 #define N_DIMMERS 3
 int dimmer_pin[] = {14, 5, 15};
-
+int ackCode = -1;
+float volt = 0.0;
+unsigned int raw =0;
+const int sleepTimeS = 60;
 byte    mac[6];
 char    macAddr[12];
 String  rxData;
@@ -28,9 +32,10 @@ String  jsonStr;
 String  gpsJson;
 String  macJson;
 char    rxChar;
-bool    newScen = false;
-bool    updateFlag = false;
-bool    GPGGA   = false;
+bool    newScen     = false;
+bool    updateFlag  = false;
+bool    GPGGA       = false;
+bool    deepSleep   = false;
 
 // The wifi object
 WiFiClient espClient;
@@ -43,12 +48,12 @@ void setup()
   Serial.begin(GPSBaud);
 
    /* switch on led */
-   pinMode(led_pin, OUTPUT);
-   digitalWrite(led_pin, LOW);
-  
+   pinMode(LED_BUILTIN, OUTPUT);
+   pinMode(A0, INPUT);
+   digitalWrite(LED_BUILTIN, LOW);
   setup_wifi();
   /* switch off led */
-  digitalWrite(led_pin, HIGH);
+  digitalWrite(LED_BUILTIN, HIGH);
   
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -56,7 +61,7 @@ void setup()
 
   /* configure dimmers, and OTA server events */
   analogWriteRange(1000);
-  analogWrite(led_pin,990);
+  analogWrite(LED_BUILTIN,990);
 
   for (int i=0; i<N_DIMMERS; i++)
   {
@@ -64,20 +69,21 @@ void setup()
     analogWrite(dimmer_pin[i],50);
   }
 
+  sprintf(host, "OTA-LEDS-%s",macAddr); 
   ArduinoOTA.setHostname(host);
   ArduinoOTA.onStart([]() { // switch off all the PWMs during upgrade
                         for(int i=0; i<N_DIMMERS;i++)
                           analogWrite(dimmer_pin[i], 0);
-                          analogWrite(led_pin,0);
+                          analogWrite(LED_BUILTIN,0);
                     });
 
   ArduinoOTA.onEnd([]() { // do a fancy thing with our board led at end
                           for (int i=0;i<30;i++)
                           {
-                            analogWrite(led_pin,(i*100) % 1001);
+                            analogWrite(LED_BUILTIN,(i*100) % 1001);
                             delay(50);
                           }
-                          client.publish("gps/log1/status", "Update complete...");
+                          client.publish("gps/status", "Update complete...");
                           updateFlag = false;
                         });
 
@@ -115,14 +121,22 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (strcmp(topic,"gps/update")==0){
     updateFlag = true;
   }
+  if (strcmp(topic,"gps/update/off")==0){
+    updateFlag = false;
+  }
+  if (strcmp(topic,"loggers/off")==0){
+    deepSleep = true;
+  }
 }
 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
-    if (client.connect("ESP8266 Client")) {
+    if (client.connect(host)) {
       // ... and subscribe to topic
       client.subscribe("gps/update");
+      client.subscribe("gps/update/off");
+      client.subscribe("loggers/off");
     } else {
       delay(5000);
     }
@@ -133,14 +147,20 @@ void reconnect() {
 void loop()
 {
   client.loop();
-  //client.publish("gps/log1/status", "I'm alive");
-
+  raw = analogRead(A0);
+  volt = raw/1023;
+  volt=volt*4.2;
   if (updateFlag == true){
-    client.publish("gps/log1/status", "Preparing for update...");
+    client.publish("gps/status", "Preparing for update...");
     for (int i=0; i<1000; i++){
       ArduinoOTA.handle();
       delay(10);
     }
+  }
+
+  if (deepSleep == true){
+    client.publish("gps/status", "Going into deep sleep");
+    ESP.deepSleep(sleepTimeS*1000000);
   }
   
   while (Serial.available() > 0) {
@@ -172,7 +192,14 @@ void loop()
           if (GPGGA) {
             jsonStr += macAddr; 
             jsonStr += "," + rxData;
-            client.publish("gps/data", jsonStr.c_str());
+            String v = String(raw);
+            ackCode = client.publish("gps/data", jsonStr.c_str());
+            client.publish("logger/voltage", v.c_str());
+            while (ackCode != 1){
+              client.publish("gps/data", "PUBLISH FAILED retrying...");
+              ackCode = client.publish("gps/data", jsonStr.c_str());
+            }
+            ackCode = 0;
             GPGGA = false;
           }
           rxData = "";

@@ -62,67 +62,26 @@ def logGpsData(gpsData, macAddr):
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
-	print("Connected with result code "+str(rc))
-
+	print("Connected from 3G script with result code "+str(rc))
 	# Subscribing in on_connect() means that if we lose the connection and
 	# reconnect then subscriptions will be renewed.
 	client.subscribe([("test/topic",0),("gps/register",0),("gps/data",0),("gps/switch/off",0),("gps/switch/on",0)])
-	client.publish("st01/status", "ST01 alive and kicking", 0, False)
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
-	#print(msg.topic+" "+str(msg.payload))
-	if msg.topic == "test/topic":
-		print "This is a test topic"
-	elif msg.topic == "gps/register":
-		print "This is a gps register topic"
-		macAddr = msg.payload[:12]
-		registerLogger(macAddr)
-	elif msg.topic == "gps/data":
-		macAddress = msg.payload[:12]
-		gps = msg.payload[13:]
-		try:
-			gps = pynmea2.parse(gps)
-		except:
-			print "some sort of error with gps scentence"
-		else:
-			logGpsData(gps, macAddress)
-			#if dictGpsLoggers.has_key(macAddress) == False:
-			#	loggerCount+=1
-			#	dictGpsLoggers[macAddress] = loggerCount
-			#else:
-			#	print("Logger " + dictGpsLoggers[macAddress] + "is alive")
-			
+	if msg.topic == "gps/data":
+		client3g.publish("gps/data", msg.payload, 0, False)
 	elif msg.topic == "gps/switch/off":
 		client.disconnect()
 
-def connectToDb():
-	global cnx 
-	global cursor
-	try:
-		cnx = mysql.connector.connect(user='pi', password='J9a5cxec', host='localhost', database='PLAYER_GPS_DATA')
-		cursor = cnx.cursor()
-		return 1
-	except mysql.connector.Error as err:
-		if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-			print("Something is wrong with your user name or password")
-			return -1
-		elif err.errno == errorcode.ER_BAD_DB_ERROR:
-			print("Database does not exist")
-			return -1
-		else:
-			print(err)
-			return -1
-rc = -1
-while  rc == -1:
-	rc = connectToDb()
-	print("RC = " + str(rc))
-	time.sleep(1)
-
 client = mqtt.Client()
-client.username_pw_set("pi", "j9a5cxec")
+client.reinitialise("3gUser", False, None)
+client3g = mqtt.Client()
+client3g.reinitialise("ST01", False, None)
+client3g.username_pw_set("pi", "j9a5cxec")
 client.on_connect = on_connect
 client.on_message = on_message
+client3g.connect("mirzahome.duckdns.org", 1883, 60)
 client.connect("localhost", 1883, 60)
 client.publish("st01/status", "connected to database", 0, False)
 client.publish("st01/status", "Assigned all callback functions", 0, False)
