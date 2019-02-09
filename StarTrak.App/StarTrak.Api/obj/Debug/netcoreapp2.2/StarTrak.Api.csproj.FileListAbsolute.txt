@@ -1,0 +1,14 @@
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\bin\Debug\netcoreapp2.2\StarTrak.Api.deps.json
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\bin\Debug\netcoreapp2.2\StarTrak.Api.runtimeconfig.json
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\bin\Debug\netcoreapp2.2\StarTrak.Api.runtimeconfig.dev.json
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\bin\Debug\netcoreapp2.2\StarTrak.Api.dll
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.csprojAssemblyReference.cache
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.csproj.CoreCompileInputs.cache
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.RazorAssemblyInfo.cache
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.RazorAssemblyInfo.cs
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.AssemblyInfoInputs.cache
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.AssemblyInfo.cs
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.RazorTargetAssemblyInfo.cache
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\bin\Debug\netcoreapp2.2\StarTrak.Api.pdb
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.dll
+D:\Projects\startrack\StarTrak.App\StarTrak.Api\obj\Debug\netcoreapp2.2\StarTrak.Api.pdb
