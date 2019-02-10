@@ -23,6 +23,11 @@ namespace StarTrak.Api.Persistance
             _applicationDbContext.SaveChanges();
         }
 
+        public async Task<IEnumerable<GpsData>> GetAllAsync()
+        {
+            return await _applicationDbContext.GpsData.OrderBy(o => o.Name).ToListAsync();
+        }
+
         public IEnumerable<GpsData> GetAll()
         {
             return _applicationDbContext.GpsData.ToList();

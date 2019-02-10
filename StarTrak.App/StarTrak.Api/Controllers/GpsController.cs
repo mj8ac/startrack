@@ -1,7 +1,8 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using StarTrak.Api.Model;
+using Microsoft.Extensions.Logging;
 using StarTrak.Api.Persistance;
-using System.Collections.Generic;
+using System;
+using System.Threading.Tasks;
 
 namespace StarTrak.Api.Controllers
 {
@@ -10,10 +11,31 @@ namespace StarTrak.Api.Controllers
     public class GpsController : ControllerBase
     {
         private readonly IGpsDataRepository _gpsDataRepository;
+        private readonly ILogger _logger;
 
-        public GpsController(IGpsDataRepository gpsDataRepository)
+        public GpsController(IGpsDataRepository gpsDataRepository, ILoggerFactory loggerFactory)
         {
             _gpsDataRepository = gpsDataRepository;
+            _logger = loggerFactory.CreateLogger(nameof(GpsController));
+        }
+
+        /// <summary>
+        /// GetAllGpsData gets all the gsp data async
+        /// </summary>
+        /// <returns>IEnumarble gpsData</returns>
+        [HttpGet]
+        public async Task<ActionResult> GetAllGpsData()
+        {
+            try
+            {
+                var model = await _gpsDataRepository.GetAllAsync();
+                return Ok(model);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex.Message);
+                return BadRequest();
+            }
         }
 
         /// <summary>
@@ -21,10 +43,10 @@ namespace StarTrak.Api.Controllers
         /// Will hav to look a getting this async
         /// </summary>
         /// <returns>all GpsData</returns>
-        [HttpGet]
-        public IEnumerable<GpsData> ListGps()
-        {
-            return _gpsDataRepository.GetAll();
-        }
+        //[HttpGet]
+        //public IEnumerable<GpsData> ListGps()
+        //{
+        //    return _gpsDataRepository.GetAll();
+        //}
     }
 }

@@ -19,6 +19,12 @@ namespace StarTrak.Api
 
         public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
             WebHost.CreateDefaultBuilder(args)
+                .ConfigureLogging(configureLogging =>
+                {
+                    configureLogging.AddConsole();
+                    configureLogging.AddDebug();
+                    configureLogging.AddEventSourceLogger();
+                })
                 .UseStartup<Startup>();
     }
 }

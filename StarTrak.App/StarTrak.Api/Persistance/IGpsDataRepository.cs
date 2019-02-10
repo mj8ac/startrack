@@ -9,6 +9,7 @@ namespace StarTrak.Api.Persistance
     public interface IGpsDataRepository
     {
         void Add(GpsData gpsData);
+        Task<IEnumerable<GpsData>> GetAllAsync();
         IEnumerable<GpsData> GetAll();
         GpsData GetBy(Guid id);
         void Remove(Guid id);
