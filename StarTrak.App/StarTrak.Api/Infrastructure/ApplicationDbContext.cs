@@ -7,17 +7,13 @@ namespace StarTrak.Api.Infrastructure
     public class ApplicationDbContext : DbContext
     {
 
-        public IConfiguration Configuration { get; }
-
         public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options, IConfiguration configuration) : base(options)
         {
-            Configuration = configuration;
         }
 
-        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        public ApplicationDbContext()
         {
             
-            optionsBuilder.UseMySQL(Configuration.GetConnectionString("DefaultConnection"));
         }
 
         public DbSet<GpsData> GpsData { get; set; }

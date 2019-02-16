@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace StarTrak.Api.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("api/gps")]
     [ApiController]
     public class GpsController : ControllerBase
     {
@@ -24,6 +24,8 @@ namespace StarTrak.Api.Controllers
         /// </summary>
         /// <returns>IEnumarble gpsData</returns>
         [HttpGet]
+        [Produces("application/json")]
+        [Route("list")]
         public async Task<ActionResult> GetAllGpsData()
         {
             try

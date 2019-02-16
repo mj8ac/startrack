@@ -10,43 +10,45 @@ namespace StarTrak.Api.Persistance
 {
     public class GpsDataRepository : IGpsDataRepository
     {
-        private readonly ApplicationDbContext _applicationDbContext;
 
-        public GpsDataRepository(ApplicationDbContext applicationDbContext)
+        private readonly MsSqlDbContext _msSqlDbContext;
+
+        public GpsDataRepository(MsSqlDbContext msSqlDbContext)
         {
-            _applicationDbContext = applicationDbContext;
+            _msSqlDbContext = msSqlDbContext;
         }
 
         public void Add(GpsData gpsData)
         {
-            _applicationDbContext.Add(gpsData);
-            _applicationDbContext.SaveChanges();
+            _msSqlDbContext.Add(gpsData);
+            _msSqlDbContext.SaveChanges();
+
         }
 
         public async Task<IEnumerable<GpsData>> GetAllAsync()
         {
-            return await _applicationDbContext.GpsData.OrderBy(o => o.Name).ToListAsync();
+            return await _msSqlDbContext.GpsData.OrderBy(o => o.Name).ToListAsync();
         }
 
         public IEnumerable<GpsData> GetAll()
         {
-            return _applicationDbContext.GpsData.ToList();
+            return _msSqlDbContext.GpsData.ToList();
         }
 
         public GpsData GetBy(Guid id)
         {
-            return _applicationDbContext.Find<GpsData>(id);
+            return _msSqlDbContext.Find<GpsData>(id);
         }
 
         public void Remove(Guid id)
         {
             var gpsData = GetBy(id);
-            _applicationDbContext.Remove(gpsData);
+            _msSqlDbContext.Remove(gpsData);
         }
 
         public void Update(GpsData gpsData)
         {
-            _applicationDbContext.Update(gpsData);
+            _msSqlDbContext.Update(gpsData);
         }
     }
 }

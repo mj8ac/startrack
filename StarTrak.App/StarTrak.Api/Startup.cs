@@ -10,6 +10,9 @@ using StarTrak.Api.Infrastructure;
 using StarTrak.Api.Persistance;
 using Swashbuckle.AspNetCore.Swagger;
 using System;
+using System.Configuration;
+using Microsoft.EntityFrameworkCore;
+using StarTrak.Api.Infrastructure.Filters;
 
 namespace StarTrak.Api
 {
@@ -17,20 +20,22 @@ namespace StarTrak.Api
     {
         private readonly ILogger _logger;
 
-        public IConfiguration Configuration { get; }
+        public IConfiguration _configuration { get; }
+        public IHostingEnvironment _env { get; }
 
-        public Startup(IConfiguration configuration, ILogger<Startup> logger)
+        public Startup(IConfiguration configuration, ILogger<Startup> logger, IHostingEnvironment env)
         {
-            Configuration = configuration;
+            _configuration = configuration;
             _logger = logger;
+            _env = env;
         }
 
         // This method gets called by the runtime. Use this method to add services to the container.
         public IServiceProvider ConfigureServices(IServiceCollection services)
         {
             services
-                .AddCustomeMVC(Configuration)
-                .AddCustomeDbContext(Configuration, _logger)
+                .AddCustomeMvc(_configuration)
+                .AddCustomeDbContext(_configuration, _logger, _env)
                 .AddSwagger();
             
 
@@ -58,9 +63,9 @@ namespace StarTrak.Api
 
     public static class CustomExtensionMethods
     {
-        public static IServiceCollection AddCustomeMVC(this IServiceCollection services, IConfiguration configuration)
+        public static IServiceCollection AddCustomeMvc(this IServiceCollection services, IConfiguration configuration)
         {
-            services.AddMvc()
+            services.AddMvc(options => { options.Filters.Add(typeof(HttpGlobalExceptionFilter)); })
                 .SetCompatibilityVersion(CompatibilityVersion.Version_2_2)
                 .AddControllersAsServices();
 
@@ -68,20 +73,33 @@ namespace StarTrak.Api
             {
                 options.AddPolicy("CorsPolicy",
                     builder => builder
-                    .SetIsOriginAllowed((host) => true)
-                    .AllowAnyMethod()
-                    .AllowAnyHeader()
-                    .AllowCredentials());
+                        .SetIsOriginAllowed((host) => true)
+                        .AllowAnyMethod()
+                        .AllowAnyHeader()
+                        .AllowCredentials());
             });
 
             return services;
         }
 
-        public static IServiceCollection AddCustomeDbContext(this IServiceCollection services, IConfiguration configuration, ILogger logger)
+        public static IServiceCollection AddCustomeDbContext(this IServiceCollection services,
+            IConfiguration configuration, ILogger logger, IHostingEnvironment env)
         {
-            services.AddDbContext<ApplicationDbContext>();
 
-            services.AddSingleton<IGpsDataRepository, GpsDataRepository>();
+            //if (env.IsDevelopment())
+            //{
+                //o => o.UseSqlServer(Configuration.GetConnectionString("PostConnection"))
+                services.AddDbContext<MsSqlDbContext>(
+                    o => o.UseSqlServer(configuration.GetConnectionString("Default")));
+            //}
+            //else
+            //{
+            //    services.AddDbContext<ApplicationDbContext>(
+            //        o => o.UseMySQL(configuration.GetConnectionString("Default")));
+            //}
+
+
+            services.AddScoped<IGpsDataRepository, GpsDataRepository>();
             logger.LogInformation("Added GpsDataRepository to services");
 
             return services;
@@ -98,7 +116,7 @@ namespace StarTrak.Api
                     Version = "v1",
                     Description = "The StarTrak Microservice HTTP API. This is a Data-Driven/CRUD microservice sample",
                     TermsOfService = "Terms Of Service",
-                    Contact = new Contact { Name = "Ian Moore", Url = "http://twitter.com/moorewebuk" },
+                    Contact = new Contact {Name = "Ian Moore", Url = "http://twitter.com/moorewebuk"},
                 });
             });
 
