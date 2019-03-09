@@ -1,0 +1,14 @@
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\bin\Debug\netcoreapp2.2\StarTrak.Service.Gps.deps.json
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\bin\Debug\netcoreapp2.2\StarTrak.Service.Gps.runtimeconfig.json
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\bin\Debug\netcoreapp2.2\StarTrak.Service.Gps.runtimeconfig.dev.json
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\bin\Debug\netcoreapp2.2\StarTrak.Service.Gps.dll
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.csprojAssemblyReference.cache
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.csproj.CoreCompileInputs.cache
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.RazorAssemblyInfo.cache
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.RazorAssemblyInfo.cs
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.AssemblyInfoInputs.cache
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.AssemblyInfo.cs
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.RazorTargetAssemblyInfo.cache
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\bin\Debug\netcoreapp2.2\StarTrak.Service.Gps.pdb
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.dll
+D:\Projects\dotnet\StarTrak\StarTrak.Service.Gps\obj\Debug\netcoreapp2.2\StarTrak.Service.Gps.pdb

@@ -1,0 +1,11 @@
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\bin\Debug\netcoreapp2.2\StarTrak.ReciveTest.deps.json
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\bin\Debug\netcoreapp2.2\StarTrak.ReciveTest.runtimeconfig.json
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\bin\Debug\netcoreapp2.2\StarTrak.ReciveTest.runtimeconfig.dev.json
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\bin\Debug\netcoreapp2.2\StarTrak.ReciveTest.dll
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\bin\Debug\netcoreapp2.2\StarTrak.ReciveTest.pdb
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.csprojAssemblyReference.cache
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.csproj.CoreCompileInputs.cache
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.AssemblyInfoInputs.cache
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.AssemblyInfo.cs
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.dll
+D:\Projects\dotnet\StarTrak\StarTrak.ReciveTest\obj\Debug\netcoreapp2.2\StarTrak.ReciveTest.pdb
