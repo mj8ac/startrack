@@ -33,6 +33,9 @@ This will restore all packages to the project and run the migration to create th
 dotnet run
 ```
 
+The `StarTrak.ReciveTest` is a console app when run will listen to RabbitMQ message queue `startrak-gps-data` when a post
+has been sent to https://localhost:5001/api/v1/gps/{playerId} the message should be consumed by the console app
+
 To run the project and you can go to [https://localhost:5001/swagger/index.html](https://localhost:5001/swagger/index.html) this will show the Api version and the urls with differant actions
 
 Any question just let me know
