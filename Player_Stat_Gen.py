@@ -58,6 +58,7 @@ class Player:
 		self.isInOpp5		= False
 				
 		self.points			= []
+		self.jsonPoints		= []
 		self.logCount		= 0
 	
 	# this function is called from updatePosition
@@ -128,9 +129,12 @@ class Player:
 		
 		if (len(self.points) == 5):
 			del self.points[0]
+			del self.jsonPoints[0]
 			self.points.append([self.time,(self.currentLat, self.currentLong)])
+			self.jsonPoints.append([self.currentLat, self.currentLong])
 		else:
 			self.points.append([self.time,(self.currentLat, self.currentLong)])
+			self.jsonPoints.append([self.currentLat, self.currentLong])
 		
 		self.updateDistance()
 		self.updateAvgSpeed()
@@ -155,8 +159,9 @@ class Player:
 			"currentSpeed"	: round(self.getSpeed(),2), # now you can get the up to date speed stats
 			"topSpeed"		: self.topSpeed,
 			"slowestSpeed"	: self.slowestSpeed,
-			"lastFivePoints": str(self.points),
-			"avgSpeed"		: round(self.averageSpeed,2)
+			"lastFivePoints": self.jsonPoints,
+			"avgSpeed"		: round(self.averageSpeed,2),
+			"currentPos"	: [self.currentLat, self.currentLong]
 		}
 		return stats
 		

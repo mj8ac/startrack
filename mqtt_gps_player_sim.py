@@ -4,7 +4,7 @@ import time
 MQTT_SERVER_IP	 	= "localhost"
 MQTT_SERVER_PORT 	= 1883
 NMEA_DATA_FILE_PATH = r"E:\STAR_TRACK\Logging\2017-12-16_Bournemouth_Home\0B574C7FCF5C_B_SANDERSON_sim.nmea"
-MSG_FREQUENCY		= 1
+MSG_FREQUENCY		= 0.1
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
