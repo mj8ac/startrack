@@ -9,10 +9,10 @@
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* ssid = "EE-Hub-3dqG";
-const char* password = "bug-DROP-lyric";
+const char* ssid = "EE-CCA1QT";
+const char* password = "H74eMm9rCighmr";
 const char* mqtt_server = "192.168.1.201";
-const char* VERSION = "1.0"
+const char* VERSION = "1.0.0";
 
 char msg[MSG_BUFFER_SIZE];
 char gps[MSG_BUFFER_SIZE];
@@ -35,6 +35,7 @@ String heartRate;
 String strMsg;
 String sMac;
 String sMqttGpsMsg;
+String clientId;
 
 time_t sysTime = 0;
 
@@ -70,19 +71,13 @@ int16_t AccelX, AccelY, AccelZ, Temperature, GyroX, GyroY, GyroZ;
 double Ax, Ay, Az, T, Gx, Gy, Gz;
 
 void setup_wifi() {
-
   delay(10);
   // We start by connecting to a WiFi network
-//  Serial.println();
-//  Serial.print("Connecting to ");
-//  Serial.println(ssid);
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   sMac = WiFi.macAddress();
-
-  //sMac = String((char *)mac);
-    
+  clientId = "RB32-" + sMac;
+   
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     #ifdef PRINT_DEBUG_MSGS
@@ -110,8 +105,6 @@ void reconnect() {
     #ifdef PRINT_DEBUG_MSGS
     Serial.print("Attempting MQTT connection...");
     #endif
-    // Create a random client ID
-    String clientId = "RB32-" + sMac;
     // Attempt to connect
     if (client.connect(clientId.c_str())) {
       #ifdef PRINT_DEBUG_MSGS
@@ -119,8 +112,6 @@ void reconnect() {
       #endif
       // Once connected, publish an announcement...
       client.publish("outTopic", "hello world");
-      // ... and resubscribe
-      client.subscribe("inTopic");
     } else {
       #ifdef PRINT_DEBUG_MSGS
       Serial.print("failed, rc=");
@@ -140,7 +131,7 @@ void setup() {
   MPU6050_Init();
   setup_wifi();
   client.setServer(mqtt_server, 9001);
-  ESPhttpUpdate.update("192.168.0.2", 80, "/rb32update", "");
+  ESPhttpUpdate.update("192.168.1.201", 80, "/rb32update", VERSION);
 }
 
 void loop() {
