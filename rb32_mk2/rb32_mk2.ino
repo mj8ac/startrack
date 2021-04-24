@@ -5,14 +5,18 @@
 #include <ArduinoOTA.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
+#include <ESP8266WiFiMulti.h>
 
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* ssid = "EE-CCA1QT";
-const char* password = "H74eMm9rCighmr";
-const char* mqtt_server = "192.168.1.201";
 const char* VERSION = "1.0.0";
+
+ESP8266WiFiMulti wifiMulti;
+
+const char* mqtt_server = "192.168.1.201";
+const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+//const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
 
 char msg[MSG_BUFFER_SIZE];
 char gps[MSG_BUFFER_SIZE];
@@ -74,7 +78,10 @@ void setup_wifi() {
   delay(10);
   // We start by connecting to a WiFi network
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+
+  wifiMulti.addAP("EE-CCA1QT", "H74eMm9rCighmr");
+  wifiMulti.addAP("EE-Hub-UNq9", "coat-tag-CUBIC");
+  
   sMac = WiFi.macAddress();
   clientId = "RB32-" + sMac;
    
@@ -131,7 +138,7 @@ void setup() {
   MPU6050_Init();
   setup_wifi();
   client.setServer(mqtt_server, 9001);
-  ESPhttpUpdate.update("192.168.1.201", 80, "/rb32update", VERSION);
+  ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
 }
 
 void loop() {
@@ -140,6 +147,8 @@ void loop() {
     reconnect();
   }
   client.loop();
+
+  wifiMulti.run();
 
   Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
 
