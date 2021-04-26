@@ -87,6 +87,7 @@ void setup_wifi() {
    
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+    wifiMulti.run();
     #ifdef PRINT_DEBUG_MSGS
     Serial.print(".");
     #endif
