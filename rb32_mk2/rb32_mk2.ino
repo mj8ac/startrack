@@ -10,13 +10,13 @@
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* VERSION = "1.0.0";
+const char* VERSION = "1.0.9";
 
 ESP8266WiFiMulti wifiMulti;
 
 const char* mqtt_server = "192.168.1.201";
-const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-//const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
+//const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
 
 char msg[MSG_BUFFER_SIZE];
 char gps[MSG_BUFFER_SIZE];
@@ -26,20 +26,24 @@ char szYear[4];
 char szHour[2];
 char szMins[2];
 char szSec[2];
+char szTime[12];
 
 char rx;
 
 bool bZda = false;
 
 byte mac[6];
-int sz;
-int ecg;
+int sz =0;
+int ecg = 0;
+int ledTimer = 0;
 
 String heartRate;
 String strMsg;
 String sMac;
 String sMqttGpsMsg;
 String clientId;
+String gpsTime;
+String timeAgeStr;
 
 time_t sysTime = 0;
 
@@ -73,6 +77,9 @@ const uint8_t MPU6050_REGISTER_SIGNAL_PATH_RESET  = 0x68;
 
 int16_t AccelX, AccelY, AccelZ, Temperature, GyroX, GyroY, GyroZ;
 double Ax, Ay, Az, T, Gx, Gy, Gz;
+unsigned long lastGpsTimeUpdate = 0;
+unsigned long loopTime = 0;
+unsigned long timeAge = 0;
 
 void setup_wifi() {
   delay(10);
@@ -107,6 +114,16 @@ void setup_wifi() {
   #endif
 }
 
+void callback(char* topic, byte* payload, unsigned int length) {
+if ((char)payload[0] == '1')
+{
+  #ifdef PRINT_DEBUG_MSGS
+  Serial.print("Resetting");
+  #endif
+  ESP.restart();
+}
+}
+
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
@@ -120,6 +137,7 @@ void reconnect() {
       #endif
       // Once connected, publish an announcement...
       client.publish("outTopic", "hello world");
+      client.subscribe("rb32/restart");
     } else {
       #ifdef PRINT_DEBUG_MSGS
       Serial.print("failed, rc=");
@@ -139,7 +157,9 @@ void setup() {
   MPU6050_Init();
   setup_wifi();
   client.setServer(mqtt_server, 9001);
+  client.setCallback(callback);
   ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+  pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
@@ -150,6 +170,14 @@ void loop() {
   client.loop();
 
   wifiMulti.run();
+
+  digitalWrite(LED_BUILTIN, HIGH); // LED OFF
+  if (ledTimer > 50)
+  {
+    digitalWrite(LED_BUILTIN, LOW); // LED ON
+    ledTimer = 0;
+  }
+  ledTimer++;
 
   Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
 
@@ -184,35 +212,44 @@ void loop() {
   if (rx == '\n')
     {
       //parse out the time so we can set the wemos clock
-//      if (strMsg.startsWith("$GNZDA"))
-//      {
-//        if (strMsg.charAt(7) != ',')
-//        {
-//          szHour[0]  = strMsg.charAt(8);
-//          szHour[1]  = strMsg.charAt(9);
-//          szMins[0]  = strMsg.charAt(10);
-//          szMins[1]  = strMsg.charAt(11);
-//          szSec[0]   = strMsg.charAt(12);
-//          szSec[1]   = strMsg.charAt(13);
-//          szDay[0]   = strMsg.charAt(18);
-//          szDay[1]   = strMsg.charAt(19);
-//          szMonth[0] = strMsg.charAt(21);
-//          szMonth[1] = strMsg.charAt(22);
-//          szYear[0]  = strMsg.charAt(24);
-//          szYear[1]  = strMsg.charAt(25);
-//          szYear[2]  = strMsg.charAt(26);
-//          szYear[3]  = strMsg.charAt(27);
-//          
-//          setTime(atoi(szHour),atoi(szMins),atoi(szSec),atoi(szDay),atoi(szMonth),atoi(szYear));
-//        }
-//      }
-//      sysTime = now();
-      //sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"}";
-      //client.publish("gps/data", sMqttGpsMsg.c_str());
-      sMqttGpsMsg = sMac + strMsg;
+      if (strMsg.startsWith("$GNZDA"))
+      {
+        if (strMsg.charAt(7) != ',')
+        {
+          szHour[0]  = strMsg.charAt(8);
+          szHour[1]  = strMsg.charAt(9);
+          szMins[0]  = strMsg.charAt(10);
+          szMins[1]  = strMsg.charAt(11);
+          szSec[0]   = strMsg.charAt(12);
+          szSec[1]   = strMsg.charAt(13);
+          szDay[0]   = strMsg.charAt(18);
+          szDay[1]   = strMsg.charAt(19);
+          szMonth[0] = strMsg.charAt(21);
+          szMonth[1] = strMsg.charAt(22);
+          szYear[0]  = strMsg.charAt(24);
+          szYear[1]  = strMsg.charAt(25);
+          szYear[2]  = strMsg.charAt(26);
+          szYear[3]  = strMsg.charAt(27);
+          
+          lastGpsTimeUpdate = millis();
+          
+          setTime(atoi(szHour),atoi(szMins),atoi(szSec),atoi(szDay),atoi(szMonth),atoi(szYear));
+          
+        }
+      }
+      //sysTime = now();
+      //gpsTime = String(sysTime);
+      loopTime = millis();
+      timeAge = loopTime - lastGpsTimeUpdate;
+      //timeAgeStr = String(timeAge);
+      sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
       client.publish("gps/data", sMqttGpsMsg.c_str());
+      //sMqttGpsMsg = sMac + strMsg;
+      //client.publish("gps/data", sMqttGpsMsg.c_str());
       sMqttGpsMsg = "";
       strMsg = "";
+      gpsTime = "";
+      timeAgeStr = "";
       break;
     }
   }
