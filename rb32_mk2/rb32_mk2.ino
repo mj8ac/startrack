@@ -10,22 +10,24 @@
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* VERSION = "1.0.9";
+const char* VERSION = "2.0.7";
 
 ESP8266WiFiMulti wifiMulti;
 
-const char* mqtt_server = "192.168.1.201";
-//const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
+//const char* MQTT_SERVER = "192.168.42.1";
+const char* MQTT_SERVER = "192.168.1.201";
+const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+//const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
+int MQTT_PORT = 1883;
 
 char msg[MSG_BUFFER_SIZE];
 char gps[MSG_BUFFER_SIZE];
-char szDay[2];
-char szMonth[2];
-char szYear[4];
-char szHour[2];
-char szMins[2];
-char szSec[2];
+char szDay[3];
+char szMonth[3];
+char szYear[5];
+char szHour[3];
+char szMins[3];
+char szSec[3];
 char szTime[12];
 
 char rx;
@@ -33,9 +35,9 @@ char rx;
 bool bZda = false;
 
 byte mac[6];
-int sz =0;
-int ecg = 0;
-int ledTimer = 0;
+int  sz = 0;
+int  ecg = 0;
+int  ledTimer = 0;
 
 String heartRate;
 String strMsg;
@@ -86,6 +88,7 @@ void setup_wifi() {
   // We start by connecting to a WiFi network
   WiFi.mode(WIFI_STA);
 
+  wifiMulti.addAP("ST01", "J9a5cxec");
   wifiMulti.addAP("EE-CCA1QT", "H74eMm9rCighmr");
   wifiMulti.addAP("EE-Hub-UNq9", "coat-tag-CUBIC");
   
@@ -145,21 +148,24 @@ void reconnect() {
       Serial.println(" try again in 5 seconds");
       #endif
       // Wait 5 seconds before retrying
+      digitalWrite(LED_BUILTIN, HIGH); // LED OFF
       delay(5000);
+      digitalWrite(LED_BUILTIN, LOW); // LED ON
     }
   }
 }
 
 void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW); // LED ON
   Serial.begin(9600);
   Serial.swap();
   Wire.begin(sda, scl);
   MPU6050_Init();
   setup_wifi();
-  client.setServer(mqtt_server, 9001);
+  client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(callback);
   ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
-  pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
@@ -190,7 +196,9 @@ void loop() {
   Gy = (double)GyroY / GyroScaleFactor;
   Gz = (double)GyroZ / GyroScaleFactor;
   ecg = analogRead(a0);
-  snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg);
+  loopTime = millis();
+  timeAge = loopTime - lastGpsTimeUpdate;
+  snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d,\"time\":%d%d%d.%lu}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg,hour(),minute(),second(), timeAge);
 
   #ifdef PRINT_DEBUG_MSGS
   Serial.print("Ax: "); Serial.print(Ax);
@@ -214,36 +222,43 @@ void loop() {
       //parse out the time so we can set the wemos clock
       if (strMsg.startsWith("$GNZDA"))
       {
-        if (strMsg.charAt(7) != ',')
-        {
-          szHour[0]  = strMsg.charAt(8);
-          szHour[1]  = strMsg.charAt(9);
-          szMins[0]  = strMsg.charAt(10);
-          szMins[1]  = strMsg.charAt(11);
-          szSec[0]   = strMsg.charAt(12);
-          szSec[1]   = strMsg.charAt(13);
+
+          szHour[0]  = strMsg.charAt(7);
+          szHour[1]  = strMsg.charAt(8);
+          szHour[2]  = '\0';
+          szMins[0]  = strMsg.charAt(9);
+          szMins[1]  = strMsg.charAt(10);
+          szMins[2]  = '\0';
+          szSec[0]   = strMsg.charAt(11);
+          szSec[1]   = strMsg.charAt(12);
+          szSec[2]  = '\0';
           szDay[0]   = strMsg.charAt(18);
           szDay[1]   = strMsg.charAt(19);
+          szDay[2]  = '\0';
           szMonth[0] = strMsg.charAt(21);
           szMonth[1] = strMsg.charAt(22);
+          szMonth[2]  = '\0';
           szYear[0]  = strMsg.charAt(24);
           szYear[1]  = strMsg.charAt(25);
           szYear[2]  = strMsg.charAt(26);
           szYear[3]  = strMsg.charAt(27);
+          szYear[4]  = '\0';
           
           lastGpsTimeUpdate = millis();
           
           setTime(atoi(szHour),atoi(szMins),atoi(szSec),atoi(szDay),atoi(szMonth),atoi(szYear));
-          
-        }
+
       }
+
+      if (strMsg.startsWith("$GNGGA"))
+      {
       //sysTime = now();
       //gpsTime = String(sysTime);
-      loopTime = millis();
-      timeAge = loopTime - lastGpsTimeUpdate;
+      
       //timeAgeStr = String(timeAge);
       sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
       client.publish("gps/data", sMqttGpsMsg.c_str());
+      }
       //sMqttGpsMsg = sMac + strMsg;
       //client.publish("gps/data", sMqttGpsMsg.c_str());
       sMqttGpsMsg = "";
@@ -251,9 +266,11 @@ void loop() {
       gpsTime = "";
       timeAgeStr = "";
       break;
+      //}
+
     }
   }
-    delay(40);
+    delay(35);
 }
 
 void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
