@@ -10,15 +10,16 @@
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* VERSION = "2.0.7";
+const char* VERSION = "2.0.8";
 
 ESP8266WiFiMulti wifiMulti;
 
-//const char* MQTT_SERVER = "192.168.42.1";
-const char* MQTT_SERVER = "192.168.1.201";
+const char* MQTT_SERVER_PI    = "192.168.42.1";
+const char* MQTT_SERVER_JONNY = "192.168.1.201";
+const char* MQTT_SERVER_DAVE  = "192.168.1.201";
+int         MQTT_PORT         = 1883;
+
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-//const char* UPDATE_SERVER = "192.168.1.201"; // Jonny's laptop
-int MQTT_PORT = 1883;
 
 char msg[MSG_BUFFER_SIZE];
 char gps[MSG_BUFFER_SIZE];
@@ -29,10 +30,9 @@ char szHour[3];
 char szMins[3];
 char szSec[3];
 char szTime[12];
-
 char rx;
 
-bool bZda = false;
+bool bZda        = false;
 
 byte mac[6];
 int  sz = 0;
@@ -127,6 +127,7 @@ if ((char)payload[0] == '1')
 }
 }
 
+// yes, there are 3 nested if/else statements here. Don't judge me. 
 void reconnect() {
   // Loop until we're reconnected
   while (!client.connected()) {
@@ -147,10 +148,39 @@ void reconnect() {
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
       #endif
+
+      // Try another broker
+      client.setServer(MQTT_SERVER_DAVE, MQTT_PORT);
+      if (client.connect(clientId.c_str())) {
+      #ifdef PRINT_DEBUG_MSGS
+      Serial.println("connected");
+      #endif
+      // Once connected, publish an announcement...
+      client.publish("outTopic", "hello world");
+      client.subscribe("rb32/restart");
+    }
+    else {
+      #ifdef PRINT_DEBUG_MSGS
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      #endif
+
       // Wait 5 seconds before retrying
+      client.setServer(MQTT_SERVER_JONNY, MQTT_PORT);
+      if (client.connect(clientId.c_str())) {
+      #ifdef PRINT_DEBUG_MSGS
+      Serial.println("connected");
+      #endif
+      // Once connected, publish an announcement...
+      client.publish("outTopic", "hello world");
+      client.subscribe("rb32/restart");
+      }
       digitalWrite(LED_BUILTIN, HIGH); // LED OFF
+      yield();
       delay(5000);
       digitalWrite(LED_BUILTIN, LOW); // LED ON
+    }
     }
   }
 }
@@ -163,7 +193,7 @@ void setup() {
   Wire.begin(sda, scl);
   MPU6050_Init();
   setup_wifi();
-  client.setServer(MQTT_SERVER, MQTT_PORT);
+  client.setServer(MQTT_SERVER_PI, MQTT_PORT);
   client.setCallback(callback);
   ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
 }
