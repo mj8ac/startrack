@@ -10,13 +10,13 @@
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* VERSION = "2.0.8";
+const char* VERSION = "2.0.14";
 
 ESP8266WiFiMulti wifiMulti;
 
 const char* MQTT_SERVER_PI    = "192.168.42.1";
 const char* MQTT_SERVER_JONNY = "192.168.1.201";
-const char* MQTT_SERVER_DAVE  = "192.168.1.201";
+const char* MQTT_SERVER_DAVE  = "192.168.1.164";
 int         MQTT_PORT         = 1883;
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
@@ -244,7 +244,8 @@ void loop() {
   
   while (Serial.available() > 0) {
       rx = Serial.read();
-      strMsg += rx;
+      if (rx != '\n')
+        strMsg += rx;
       yield();
  
   if (rx == '\n')
@@ -282,21 +283,17 @@ void loop() {
 
       if (strMsg.startsWith("$GNGGA"))
       {
-      //sysTime = now();
-      //gpsTime = String(sysTime);
-      
-      //timeAgeStr = String(timeAge);
-      sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
-      client.publish("gps/data", sMqttGpsMsg.c_str());
+//      sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
+//      client.publish("gps/data", sMqttGpsMsg.c_str());
+        sMqttGpsMsg = sMac + ',' + strMsg;
+        client.publish("gps/data", sMqttGpsMsg.c_str());
       }
-      //sMqttGpsMsg = sMac + strMsg;
-      //client.publish("gps/data", sMqttGpsMsg.c_str());
+
       sMqttGpsMsg = "";
       strMsg = "";
       gpsTime = "";
       timeAgeStr = "";
       break;
-      //}
 
     }
   }
