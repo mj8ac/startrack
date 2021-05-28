@@ -6,11 +6,12 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <ESP8266WiFiMulti.h>
+#include <Array.h>
 
 #define MSG_BUFFER_SIZE (200)
 //#define PRINT_DEBUG_MSGS
 
-const char* VERSION = "2.0.14";
+const char* VERSION = "2.0.22";
 
 ESP8266WiFiMulti wifiMulti;
 
@@ -38,6 +39,11 @@ byte mac[6];
 int  sz = 0;
 int  ecg = 0;
 int  ledTimer = 0;
+long IMU_DELAY_TIME = 40;
+
+long lastImuTx = 0;
+long lastMqttRestart = 0;
+long timeNow = 0;
 
 String heartRate;
 String strMsg;
@@ -83,13 +89,15 @@ unsigned long lastGpsTimeUpdate = 0;
 unsigned long loopTime = 0;
 unsigned long timeAge = 0;
 
+Array<String,250> array;
+
 void setup_wifi() {
   delay(10);
   // We start by connecting to a WiFi network
   WiFi.mode(WIFI_STA);
 
   wifiMulti.addAP("ST01", "J9a5cxec");
-  wifiMulti.addAP("EE-CCA1QT", "H74eMm9rCighmr");
+  //wifiMulti.addAP("EE-CCA1QT", "H74eMm9rCighmr");
   wifiMulti.addAP("EE-Hub-UNq9", "coat-tag-CUBIC");
   
   sMac = WiFi.macAddress();
@@ -102,6 +110,9 @@ void setup_wifi() {
     Serial.print(".");
     #endif
   }
+
+  //WiFi.setAutoReconnect(true);
+  //WiFi.persistent(true);
 
   #ifdef PRINT_DEBUG_MSGS
   Serial.println("");
@@ -127,10 +138,7 @@ if ((char)payload[0] == '1')
 }
 }
 
-// yes, there are 3 nested if/else statements here. Don't judge me. 
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
+boolean reconnect() {
     #ifdef PRINT_DEBUG_MSGS
     Serial.print("Attempting MQTT connection...");
     #endif
@@ -148,41 +156,10 @@ void reconnect() {
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
       #endif
-
-      // Try another broker
-      client.setServer(MQTT_SERVER_DAVE, MQTT_PORT);
-      if (client.connect(clientId.c_str())) {
-      #ifdef PRINT_DEBUG_MSGS
-      Serial.println("connected");
-      #endif
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      client.subscribe("rb32/restart");
-    }
-    else {
-      #ifdef PRINT_DEBUG_MSGS
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      #endif
-
-      // Wait 5 seconds before retrying
-      client.setServer(MQTT_SERVER_JONNY, MQTT_PORT);
-      if (client.connect(clientId.c_str())) {
-      #ifdef PRINT_DEBUG_MSGS
-      Serial.println("connected");
-      #endif
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      client.subscribe("rb32/restart");
-      }
       digitalWrite(LED_BUILTIN, HIGH); // LED OFF
-      yield();
-      delay(5000);
       digitalWrite(LED_BUILTIN, LOW); // LED ON
     }
-    }
-  }
+    return client.connected();
 }
 
 void setup() {
@@ -201,21 +178,33 @@ void setup() {
 void loop() {
 
   if (!client.connected()) {
-    reconnect();
+     long now = millis();
+    if (now - lastMqttRestart > 1000) {
+      lastMqttRestart = now;
+    if (reconnect()){
+      lastMqttRestart = 0;
+      }
+    }
   }
-  client.loop();
-
+  else{
+    client.loop();
+    }
+  
   wifiMulti.run();
 
   digitalWrite(LED_BUILTIN, HIGH); // LED OFF
-  if (ledTimer > 50)
+  if (ledTimer > 50000)
   {
     digitalWrite(LED_BUILTIN, LOW); // LED ON
     ledTimer = 0;
   }
   ledTimer++;
 
-  Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
+  timeNow = millis();
+  if (timeNow - lastImuTx > IMU_DELAY_TIME)
+  {
+    Serial.println(WiFi.RSSI());
+    Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
 
   //divide each with their sensitivity scale factor
   Ax = (double)AccelX / AccelScaleFactor;
@@ -228,8 +217,9 @@ void loop() {
   ecg = analogRead(a0);
   loopTime = millis();
   timeAge = loopTime - lastGpsTimeUpdate;
-  snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d,\"time\":%d%d%d.%lu}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg,hour(),minute(),second(), timeAge);
-
+  snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg,hour(),minute(),second(), timeAge);
+  //snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg);
+  
   #ifdef PRINT_DEBUG_MSGS
   Serial.print("Ax: "); Serial.print(Ax);
   Serial.print(" Ay: "); Serial.print(Ay);
@@ -240,13 +230,20 @@ void loop() {
   Serial.print(" Gz: "); Serial.println(Gz);
   Serial.println(msg);
   #endif
-  client.publish("imu/data", msg);
-  
+  if (client.connected())
+  {
+    client.publish("imu/data", msg);
+  }
+    
+    lastImuTx = timeNow;
+  }
+    
   while (Serial.available() > 0) {
       rx = Serial.read();
       if (rx != '\n')
         strMsg += rx;
-      yield();
+  
+  //yield();
  
   if (rx == '\n')
     {
@@ -286,7 +283,11 @@ void loop() {
 //      sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
 //      client.publish("gps/data", sMqttGpsMsg.c_str());
         sMqttGpsMsg = sMac + ',' + strMsg;
-        client.publish("gps/data", sMqttGpsMsg.c_str());
+        if(client.connected())
+        {
+          client.publish("gps/data", sMqttGpsMsg.c_str());
+        }
+        
       }
 
       sMqttGpsMsg = "";
@@ -297,7 +298,7 @@ void loop() {
 
     }
   }
-    delay(35);
+    //delay(30);
 }
 
 void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
