@@ -1,29 +1,53 @@
-#include <Wire.h>
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+#include <Ticker.h>
+#include <AsyncMqttClient.h>
+#include <Wire.h>
 #include <TimeLib.h>
-#include <ArduinoOTA.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
-#include <ESP8266WiFiMulti.h>
-#include <Array.h>
+#include <Ticker.h>
+#include <LittleFS.h>
+#include <FS.h>
 
-#define MSG_BUFFER_SIZE (200)
-//#define PRINT_DEBUG_MSGS
+#define WIFI_SSID "ST01"
+#define WIFI_PASSWORD "J9a5cxec"
 
-const char* VERSION = "2.0.22";
+#define MQTT_HOST IPAddress(192, 168, 42, 1)
+#define MQTT_PORT 1883
 
-ESP8266WiFiMulti wifiMulti;
-
-const char* MQTT_SERVER_PI    = "192.168.42.1";
-const char* MQTT_SERVER_JONNY = "192.168.1.201";
-const char* MQTT_SERVER_DAVE  = "192.168.1.164";
-int         MQTT_PORT         = 1883;
-
-const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+#define MSG_BUFFER_SIZE (196)
 
 char msg[MSG_BUFFER_SIZE];
-char gps[MSG_BUFFER_SIZE];
+char fLogs[196];
+
+const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+const char* VERSION = "3.0.0";
+
+int  ecg        = 0;
+int  rssi       = 0;
+int  pubCode    = 0;
+int  logPosition1 = 0;
+int  logPosition2 = 0;
+int  logCounter1 = 0;
+int  logCounter2 = 0;
+int  totalMissed = 0;
+long lastBlink  = 0;
+
+long timeNow    = 0;
+long loopTime   = 0;
+long timeAge    = 0;
+long lastGpsTimeUpdate  = 0;
+long IMU_DELAY_TIME     = 35;
+
+long imuT1 = 0;
+long imuT0 = 0;
+
+String mac;
+String strMsg;
+String sMqttGpsMsg;
+String gpsTime;
+String timeAgeStr;
+
 char szDay[3];
 char szMonth[3];
 char szYear[5];
@@ -33,30 +57,21 @@ char szSec[3];
 char szTime[12];
 char rx;
 
-bool bZda        = false;
+AsyncMqttClient mqttClient;
+Ticker mqttReconnectTimer;
 
-byte mac[6];
-int  sz = 0;
-int  ecg = 0;
-int  ledTimer = 0;
-long IMU_DELAY_TIME = 40;
+WiFiEventHandler wifiConnectHandler;
+WiFiEventHandler wifiDisconnectHandler;
+Ticker wifiReconnectTimer;
+File f1, f2;
 
-long lastImuTx = 0;
-long lastMqttRestart = 0;
-long timeNow = 0;
+// flush the buffer to SPI Flash
+Ticker flusherCallBack;
 
-String heartRate;
-String strMsg;
-String sMac;
-String sMqttGpsMsg;
-String clientId;
-String gpsTime;
-String timeAgeStr;
+// try to empty the file
+Ticker clearLogCallBack;
 
-time_t sysTime = 0;
-
-WiFiClient espClient;
-PubSubClient client(espClient);
+Ticker failedMsgCallBack;
 
 // MPU6050 Slave Device Address
 const uint8_t MPU6050SlaveAddress = 0x68;
@@ -85,220 +100,191 @@ const uint8_t MPU6050_REGISTER_SIGNAL_PATH_RESET  = 0x68;
 
 int16_t AccelX, AccelY, AccelZ, Temperature, GyroX, GyroY, GyroZ;
 double Ax, Ay, Az, T, Gx, Gy, Gz;
-unsigned long lastGpsTimeUpdate = 0;
-unsigned long loopTime = 0;
-unsigned long timeAge = 0;
 
-Array<String,250> array;
+int period = 500;
 
-void setup_wifi() {
-  delay(10);
-  // We start by connecting to a WiFi network
-  WiFi.mode(WIFI_STA);
+unsigned int t1LED, t2LED, t1FLUSH, t2FLUSH;
+int ledState = LOW;
 
-  wifiMulti.addAP("ST01", "J9a5cxec");
-  //wifiMulti.addAP("EE-CCA1QT", "H74eMm9rCighmr");
-  wifiMulti.addAP("EE-Hub-UNq9", "coat-tag-CUBIC");
-  
-  sMac = WiFi.macAddress();
-  clientId = "RB32-" + sMac;
-   
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    wifiMulti.run();
-    #ifdef PRINT_DEBUG_MSGS
-    Serial.print(".");
-    #endif
+bool flushingFile1 = false;
+bool flushingFile2 = false;
+bool writeIntoFlushFile1 = true;
+
+enum FLUSH_STATE {
+  FLUSH_FILE_1,
+  FLUSH_FILE_2,
+  RESET_FILES,
+  TOGGLE_FLUSH_FLAGS,
+  DONT_FLUSH
+};
+
+FLUSH_STATE flushState = DONT_FLUSH;
+//#define PRINT_DEBUG_MSGS
+
+void printDebug(String mac, String msg) {
+#ifdef PRINT_DEBUG_MSGS
+  Serial.println(mac + "," + msg);
+  String mqttStr = mac + "," + msg;
+  mqttClient.publish("rb32/debug", 0, true, mqttStr.c_str());
+#endif
+}
+
+void connectToWifi() {
+  printDebug(mac, "Connecting to Wi-Fi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+}
+
+void onWifiConnect(const WiFiEventStationModeGotIP& event) {
+  printDebug(mac, "Connected to Wi-Fi.");
+  connectToMqtt();
+}
+
+void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
+  printDebug(mac, "Disconnected from Wi-Fi.");
+  mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
+  wifiReconnectTimer.once(2, connectToWifi);
+}
+
+void connectToMqtt() {
+  printDebug(mac, "Connecting to MQTT...");
+  mqttClient.connect();
+}
+
+void onMqttConnect(bool sessionPresent) {
+  printDebug(mac, "Connected to MQTT.");
+  printDebug(mac, "Session present: ");
+  printDebug(mac, String(sessionPresent));
+  uint16_t packetIdSub = mqttClient.subscribe("rb32/debug", 2);
+  printDebug(mac, "Subscribing at QoS 2, packetId: ");
+  printDebug(mac, String(packetIdSub));
+  mqttClient.publish("rb32/debug", 0, true, "test 1");
+  printDebug(mac, "Publishing at QoS 0");
+  uint16_t packetIdPub1 = mqttClient.publish("rb32/debug", 1, true, "test 2");
+  printDebug(mac, "Publishing at QoS 1, packetId: ");
+  printDebug(mac, String(packetIdPub1));
+  uint16_t packetIdPub2 = mqttClient.publish("rb32/debug", 2, true, "test 3");
+  printDebug(mac, "Publishing at QoS 2, packetId: ");
+  printDebug(mac, String(packetIdPub2));
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+  printDebug(mac, "Disconnected from MQTT.");
+
+  if (WiFi.isConnected()) {
+    mqttReconnectTimer.once(2, connectToMqtt);
   }
-
-  //WiFi.setAutoReconnect(true);
-  //WiFi.persistent(true);
-
-  #ifdef PRINT_DEBUG_MSGS
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-  Serial.println("MAC address: ");
-  for (int i = 0; i < sizeof(mac); i++)
-  {
-    Serial.print(mac[i], HEX);
-  }
-  Serial.println("");
-  #endif
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-if ((char)payload[0] == '1')
-{
-  #ifdef PRINT_DEBUG_MSGS
-  Serial.print("Resetting");
-  #endif
-  ESP.restart();
-}
+void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
+  printDebug(mac, "Subscribe acknowledged.");
+  printDebug(mac, "  packetId: ");
+  printDebug(mac, String(packetId));
+  printDebug(mac, "  qos: ");
+  printDebug(mac, String(qos));
 }
 
-boolean reconnect() {
-    #ifdef PRINT_DEBUG_MSGS
-    Serial.print("Attempting MQTT connection...");
-    #endif
-    // Attempt to connect
-    if (client.connect(clientId.c_str())) {
-      #ifdef PRINT_DEBUG_MSGS
-      Serial.println("connected");
-      #endif
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      client.subscribe("rb32/restart");
-    } else {
-      #ifdef PRINT_DEBUG_MSGS
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      #endif
-      digitalWrite(LED_BUILTIN, HIGH); // LED OFF
-      digitalWrite(LED_BUILTIN, LOW); // LED ON
-    }
-    return client.connected();
+void onMqttUnsubscribe(uint16_t packetId) {
+  printDebug(mac, "Unsubscribe acknowledged.");
+  printDebug(mac, "  packetId: ");
+  printDebug(mac, String(packetId));
 }
 
 void setup() {
+  Serial.begin(115200);
+  //Serial.swap();
+  printDebug(mac, "In setup");
+  printDebug(mac, "Still in setup");
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW); // LED ON
-  Serial.begin(9600);
-  Serial.swap();
   Wire.begin(sda, scl);
   MPU6050_Init();
-  setup_wifi();
-  client.setServer(MQTT_SERVER_PI, MQTT_PORT);
-  client.setCallback(callback);
+
+  wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
+
+  mqttClient.onConnect(onMqttConnect);
+  mqttClient.onDisconnect(onMqttDisconnect);
+  mqttClient.onSubscribe(onMqttSubscribe);
+  mqttClient.onUnsubscribe(onMqttUnsubscribe);
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+
+  connectToWifi();
   ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+  mac = WiFi.macAddress();
+
+  if (LittleFS.begin()) {
+
+    if (LittleFS.format()) {
+      Serial.println("Formatted filesystem");
+    }
+    else
+      Serial.println("Failed to format filesystem");
+    f1 = LittleFS.open("/flushFile1.bin", "w");
+    f2 = LittleFS.open("/flushFile2.bin", "w");
+    if (!f1 || !f2) {
+      Serial.println("Failed to create flush both file!");
+    }
+    else {
+      f1.setTimeout(100);
+      f2.setTimeout(100);
+    }
+
+    //fRead = LittleFS.open("/dropped.txt", "r");
+  }
+  else
+    Serial.println("Failed to mount filesystem");
+
+
+  flusherCallBack.attach(5, initiateFlush);
+
+  t1LED = 0;
+  t2LED = 0;
+  t1FLUSH = 0;
+  t2FLUSH = 0;
 }
 
 void loop() {
-
-  if (!client.connected()) {
-     long now = millis();
-    if (now - lastMqttRestart > 1000) {
-      lastMqttRestart = now;
-    if (reconnect()){
-      lastMqttRestart = 0;
-      }
-    }
-  }
-  else{
-    client.loop();
-    }
-  
-  wifiMulti.run();
-
-  digitalWrite(LED_BUILTIN, HIGH); // LED OFF
-  if (ledTimer > 50000)
-  {
-    digitalWrite(LED_BUILTIN, LOW); // LED ON
-    ledTimer = 0;
-  }
-  ledTimer++;
-
-  timeNow = millis();
-  if (timeNow - lastImuTx > IMU_DELAY_TIME)
-  {
-    Serial.println(WiFi.RSSI());
-    Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-
-  //divide each with their sensitivity scale factor
-  Ax = (double)AccelX / AccelScaleFactor;
-  Ay = (double)AccelY / AccelScaleFactor;
-  Az = (double)AccelZ / AccelScaleFactor;
-  T  = (double)Temperature / 340 + 36.53; //temperature formula
-  Gx = (double)GyroX / GyroScaleFactor;
-  Gy = (double)GyroY / GyroScaleFactor;
-  Gz = (double)GyroZ / GyroScaleFactor;
-  ecg = analogRead(a0);
-  loopTime = millis();
-  timeAge = loopTime - lastGpsTimeUpdate;
-  snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg,hour(),minute(),second(), timeAge);
-  //snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%f,\"Ay\":%f,\"Az\":%f,\"T\":%f,\"Gx\":%f,\"Gy\":%f,\"Gz\":%f,\"ecg\":%d}",sMac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz,ecg);
-  
-  #ifdef PRINT_DEBUG_MSGS
-  Serial.print("Ax: "); Serial.print(Ax);
-  Serial.print(" Ay: "); Serial.print(Ay);
-  Serial.print(" Az: "); Serial.print(Az);
-  Serial.print(" T: "); Serial.print(T);
-  Serial.print(" Gx: "); Serial.print(Gx);
-  Serial.print(" Gy: "); Serial.print(Gy);
-  Serial.print(" Gz: "); Serial.println(Gz);
-  Serial.println(msg);
-  #endif
-  if (client.connected())
-  {
-    client.publish("imu/data", msg);
-  }
-    
-    lastImuTx = timeNow;
-  }
-    
-  while (Serial.available() > 0) {
-      rx = Serial.read();
-      if (rx != '\n')
-        strMsg += rx;
-  
-  //yield();
- 
-  if (rx == '\n')
-    {
-      //parse out the time so we can set the wemos clock
-      if (strMsg.startsWith("$GNZDA"))
-      {
-
-          szHour[0]  = strMsg.charAt(7);
-          szHour[1]  = strMsg.charAt(8);
-          szHour[2]  = '\0';
-          szMins[0]  = strMsg.charAt(9);
-          szMins[1]  = strMsg.charAt(10);
-          szMins[2]  = '\0';
-          szSec[0]   = strMsg.charAt(11);
-          szSec[1]   = strMsg.charAt(12);
-          szSec[2]  = '\0';
-          szDay[0]   = strMsg.charAt(18);
-          szDay[1]   = strMsg.charAt(19);
-          szDay[2]  = '\0';
-          szMonth[0] = strMsg.charAt(21);
-          szMonth[1] = strMsg.charAt(22);
-          szMonth[2]  = '\0';
-          szYear[0]  = strMsg.charAt(24);
-          szYear[1]  = strMsg.charAt(25);
-          szYear[2]  = strMsg.charAt(26);
-          szYear[3]  = strMsg.charAt(27);
-          szYear[4]  = '\0';
-          
-          lastGpsTimeUpdate = millis();
-          
-          setTime(atoi(szHour),atoi(szMins),atoi(szSec),atoi(szDay),atoi(szMonth),atoi(szYear));
-
-      }
-
-      if (strMsg.startsWith("$GNGGA"))
-      {
-//      sMqttGpsMsg = "{\"mac\": \"" + sMac + "\",\"gps\": \"" + strMsg + "\"" + "}";
-//      client.publish("gps/data", sMqttGpsMsg.c_str());
-        sMqttGpsMsg = sMac + ',' + strMsg;
-        if(client.connected())
-        {
-          client.publish("gps/data", sMqttGpsMsg.c_str());
-        }
-        
-      }
-
-      sMqttGpsMsg = "";
-      strMsg = "";
-      gpsTime = "";
-      timeAgeStr = "";
+  int tend = 0;
+  int tstart = 0;
+  tstart = millis();
+  switch (flushState) {
+    case FLUSH_FILE_1:
+      flushFile(f1, logCounter1, logPosition1);
       break;
+    case FLUSH_FILE_2:
+      flushFile(f2, logCounter2, logPosition2);
+      break;
+    case RESET_FILES:
+      Serial.println("STATE: RESET_FILES");
+      resetFiles();
+      break;
+    case TOGGLE_FLUSH_FLAGS:
+      Serial.println("STATE: TOGGLE_FLUSH_FLAGS");
+      toggleFlushStates();
+      break;
+    case DONT_FLUSH:
+      break;
+    default:
+      break;
+  }
+
+  readAndPublishImuData();
+  readAndPublishGpsData();
+
+
+  t2LED = millis();
+  if ((t2LED - t1LED) >= 1000) {
+    if (ledState == LOW) {
+      ledState = HIGH;
 
     }
+    else {
+      ledState = LOW;
+    }
+
+    digitalWrite(LED_BUILTIN, ledState);
+    t1LED = t2LED;
   }
-    //delay(30);
+  tend = millis();
 }
 
 void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
@@ -336,4 +322,182 @@ void MPU6050_Init() {
   I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_INT_ENABLE, 0x01);
   I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SIGNAL_PATH_RESET, 0x00);
   I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_USER_CTRL, 0x00);
+}
+
+void readAndPublishImuData() {
+  imuT1 = millis();
+
+  if (imuT1 - imuT0 >= IMU_DELAY_TIME)
+  {
+    rssi = WiFi.RSSI();
+    Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
+    //divide each with their sensitivity scale factor
+    Ax = (double)AccelX / AccelScaleFactor;
+    Ay = (double)AccelY / AccelScaleFactor;
+    Az = (double)AccelZ / AccelScaleFactor;
+    T  = (double)Temperature / 340 + 36.53; //temperature formula
+    Gx = (double)GyroX / GyroScaleFactor;
+    Gy = (double)GyroY / GyroScaleFactor;
+    Gz = (double)GyroZ / GyroScaleFactor;
+    ecg = analogRead(a0);
+    timeAge = loopTime - lastGpsTimeUpdate;
+    //int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+08.3f,\"Ay\":%+08.3f,\"Az\":%+08.3f,\"T\":%+08.3f,\"Gx\":%+08.3f,\"Gy\":%+08.3f,\"Gz\":%+08.3f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
+    int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
+#ifdef PRINT_DEBUG_MSGS
+    Serial.print("Ax: "); Serial.print(Ax);
+    Serial.print(" Ay: "); Serial.print(Ay);
+    Serial.print(" Az: "); Serial.print(Az);
+    Serial.print(" T: "); Serial.print(T);
+    Serial.print(" Gx: "); Serial.print(Gx);
+    Serial.print(" Gy: "); Serial.print(Gy);
+    Serial.print(" Gz: "); Serial.println(Gz);
+    Serial.println(msg);
+#endif
+    pubCode = mqttClient.publish("imu/data", 0, true, msg);
+
+    if (pubCode < 1) {
+      if (writeIntoFlushFile1 == true) {
+        int writtenBytes = f1.write(msg, copiedBytes);
+        logCounter1++;
+      }
+      else {
+        int writtenBytes = f2.write(msg, copiedBytes);
+        logCounter2++;
+      }
+      totalMissed++;
+    }
+    imuT0 = imuT1;
+  }
+}
+
+
+void readAndPublishGpsData() {
+  while (Serial.available() > 0) {
+    rx = Serial.read();
+    if (rx != '\n')
+      strMsg += rx;
+
+    if (rx == '\n')
+    {
+      if (strMsg.startsWith("$GNGGA"))
+      {
+        sMqttGpsMsg = mac + ',' + strMsg;
+        mqttClient.publish("gps/data", 0, true, sMqttGpsMsg.c_str());
+      }
+
+      //parse out the time so we can set the wemos clock
+      if (strMsg.startsWith("$GNZDA"))
+      {
+
+        szHour[0]  = strMsg.charAt(7);
+        szHour[1]  = strMsg.charAt(8);
+        szHour[2]  = '\0';
+        szMins[0]  = strMsg.charAt(9);
+        szMins[1]  = strMsg.charAt(10);
+        szMins[2]  = '\0';
+        szSec[0]   = strMsg.charAt(11);
+        szSec[1]   = strMsg.charAt(12);
+        szSec[2]  = '\0';
+        szDay[0]   = strMsg.charAt(18);
+        szDay[1]   = strMsg.charAt(19);
+        szDay[2]  = '\0';
+        szMonth[0] = strMsg.charAt(21);
+        szMonth[1] = strMsg.charAt(22);
+        szMonth[2]  = '\0';
+        szYear[0]  = strMsg.charAt(24);
+        szYear[1]  = strMsg.charAt(25);
+        szYear[2]  = strMsg.charAt(26);
+        szYear[3]  = strMsg.charAt(27);
+        szYear[4]  = '\0';
+
+        lastGpsTimeUpdate = millis();
+
+        setTime(atoi(szHour), atoi(szMins), atoi(szSec), atoi(szDay), atoi(szMonth), atoi(szYear));
+      }
+
+      sMqttGpsMsg = "";
+      strMsg = "";
+      gpsTime = "";
+      timeAgeStr = "";
+      break;
+    }
+  }
+}
+
+void flushFile(File &f, int &logCounter, int &logPosition) {
+  if (logCounter > 0) {
+    memset(fLogs, 0, sizeof(fLogs));
+    int flushedBytes = 0;
+    f.seek(logPosition, SeekSet);
+
+    flushedBytes = f.readBytesUntil('\r', fLogs, 196);
+
+    int rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
+
+    //if (rc >= 1) {
+    flushedBytes += 1;
+    logPosition  += flushedBytes;
+    logCounter--;
+    //}
+  }
+  else {
+    // nothing to flush so close the file and open appropriate file for writing
+    logPosition = 0;
+    flushState = DONT_FLUSH;
+  }
+}
+
+void getFailedMsgCount() {
+  Serial.println(totalMissed);
+  String missed(totalMissed);
+
+  String m;
+
+  m = mac + "--" + missed;
+  //pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
+}
+
+void toggleFlushStates() {
+  if (writeIntoFlushFile1 == true) {
+    writeIntoFlushFile1 = false;
+    flushingFile1 = true;
+    flushingFile2 = false;
+  }
+  else {
+    writeIntoFlushFile1 = true;
+    flushingFile1 = false;
+    flushingFile2 = true;
+  }
+  resetFiles();
+}
+
+void resetFiles() {
+  if (flushingFile1 == true) {
+    f1.close();
+    f2.close();
+    f1 = LittleFS.open("/flushFile1.bin", "r");
+    f2 = LittleFS.open("/flushFile2.bin", "w");
+    logCounter2 = 0;
+    logPosition1 = 0;
+    f1.setTimeout(100);
+    f2.setTimeout(100);
+    flushState = FLUSH_FILE_1;
+    Serial.println("STATE: FLUSH_FILE_1");
+  }
+  if (flushingFile2 == true) {
+    f1.close();
+    f2.close();
+    f1 = LittleFS.open("/flushFile1.bin", "w");
+    f2 = LittleFS.open("/flushFile2.bin", "r");
+    logCounter1 = 0;
+    logPosition2 = 0;
+    f1.setTimeout(100);
+    f2.setTimeout(100);
+    flushState = FLUSH_FILE_2;
+    Serial.println("STATE: FLUSH_FILE_2");
+  }
+}
+
+void initiateFlush() {
+  flushState = TOGGLE_FLUSH_FLAGS;
 }
