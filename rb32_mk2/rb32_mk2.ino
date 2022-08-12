@@ -21,7 +21,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "3.1.6";
+const char* VERSION = "3.1.7";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -326,6 +326,7 @@ void readAndPublishImuData() {
     Gy = (double)GyroY / GyroScaleFactor;
     Gz = (double)GyroZ / GyroScaleFactor;
     ecg = analogRead(a0);
+    loopTime = millis();
     timeAge = loopTime - lastGpsTimeUpdate;
     //int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+08.3f,\"Ay\":%+08.3f,\"Az\":%+08.3f,\"T\":%+08.3f,\"Gx\":%+08.3f,\"Gy\":%+08.3f,\"Gz\":%+08.3f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
     int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
@@ -557,7 +558,7 @@ void flushCounters()
   totalCached = logCounter1 + logCounter2;
   totalSent = totalSentImu + totalSentGps + totalSentLog;
   
-  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%d", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, totalCached, totalSentLog, totalSent);
+  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%d, %d", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, totalCached, totalSentLog, totalMissedLog, totalSent);
   mqttClient.publish("rb32/counters", 0, true, buff);
   flushState = prevFlushState;
 }
