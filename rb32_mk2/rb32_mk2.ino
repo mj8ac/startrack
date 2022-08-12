@@ -21,23 +21,28 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "3.0.0";
+const char* VERSION = "3.1.6";
 
-int  ecg        = 0;
-int  rssi       = 0;
-int  pubCode    = 0;
+int  ecg          = 0;
+int  rssi         = 0;
+int  pubCode      = 0;
 int  logPosition1 = 0;
 int  logPosition2 = 0;
-int  logCounter1 = 0;
-int  logCounter2 = 0;
-int  totalMissed = 0;
-long lastBlink  = 0;
+int  logCounter1  = 0;
+int  logCounter2  = 0;
+int  totalMissedLog = 0;
+int  totalMissedGps = 0;
+int  totalMissedImu = 0;
+int  totalSentLog   = 0;
+int  totalSentGps   = 0;
+int  totalSentImu   = 0;
+long lastBlink      = 0;
 
 long timeNow    = 0;
 long loopTime   = 0;
 long timeAge    = 0;
 long lastGpsTimeUpdate  = 0;
-long IMU_DELAY_TIME     = 35;
+long IMU_DELAY_TIME     = 40;
 
 long imuT1 = 0;
 long imuT0 = 0;
@@ -65,13 +70,10 @@ WiFiEventHandler wifiDisconnectHandler;
 Ticker wifiReconnectTimer;
 File f1, f2;
 
-// flush the buffer to SPI Flash
+// flush the cached logs
 Ticker flusherCallBack;
 
-// try to empty the file
-Ticker clearLogCallBack;
-
-Ticker failedMsgCallBack;
+Ticker flushCountersCallBack;
 
 // MPU6050 Slave Device Address
 const uint8_t MPU6050SlaveAddress = 0x68;
@@ -106,19 +108,23 @@ int period = 500;
 unsigned int t1LED, t2LED, t1FLUSH, t2FLUSH;
 int ledState = LOW;
 
-bool flushingFile1 = false;
-bool flushingFile2 = false;
-bool writeIntoFlushFile1 = true;
+bool flushingFile1        = false;
+bool flushingFile2        = false;
+bool writeIntoFlushFile1  = true;
 
 enum FLUSH_STATE {
   FLUSH_FILE_1,
   FLUSH_FILE_2,
   RESET_FILES,
   TOGGLE_FLUSH_FLAGS,
-  DONT_FLUSH
+  DONT_FLUSH,
+  UPDATE_FIRMWARE,
+  UPDATE_COMPLETE,
+  FLUSH_COUNTERS
 };
 
-FLUSH_STATE flushState = DONT_FLUSH;
+FLUSH_STATE flushState = UPDATE_FIRMWARE;
+FLUSH_STATE prevFlushState = DONT_FLUSH;
 //#define PRINT_DEBUG_MSGS
 
 void printDebug(String mac, String msg) {
@@ -190,8 +196,8 @@ void onMqttUnsubscribe(uint16_t packetId) {
 }
 
 void setup() {
-  Serial.begin(115200);
-  //Serial.swap();
+  Serial.begin(9600);
+  Serial.swap();
   printDebug(mac, "In setup");
   printDebug(mac, "Still in setup");
   pinMode(LED_BUILTIN, OUTPUT);
@@ -208,61 +214,73 @@ void setup() {
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 
   connectToWifi();
-  ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+
   mac = WiFi.macAddress();
 
   if (LittleFS.begin()) {
 
     if (LittleFS.format()) {
-      Serial.println("Formatted filesystem");
-    }
-    else
-      Serial.println("Failed to format filesystem");
-    f1 = LittleFS.open("/flushFile1.bin", "w");
-    f2 = LittleFS.open("/flushFile2.bin", "w");
-    if (!f1 || !f2) {
-      Serial.println("Failed to create flush both file!");
+      //Serial.println("Formatted filesystem");
     }
     else {
-      f1.setTimeout(100);
-      f2.setTimeout(100);
+      //Serial.println("Failed to format filesystem");
+      f1 = LittleFS.open("/flushFile1.bin", "w");
+      f2 = LittleFS.open("/flushFile2.bin", "w");
+      if (!f1 || !f2) {
+        //Serial.println("Failed to create flush both file!");
+      }
+      else {
+        f1.setTimeout(100);
+        f2.setTimeout(100);
+      }
+
+      //fRead = LittleFS.open("/dropped.txt", "r");
     }
 
-    //fRead = LittleFS.open("/dropped.txt", "r");
+    flusherCallBack.attach(5, initiateFlush);
+    flushCountersCallBack.attach(2, setFlushState);
+
+    // Add optional callback notifiers
+    ESPhttpUpdate.onEnd(update_finished);
+
+    t1LED = 0;
+    t2LED = 0;
+    t1FLUSH = 0;
+    t2FLUSH = 0;
   }
-  else
-    Serial.println("Failed to mount filesystem");
-
-
-  flusherCallBack.attach(5, initiateFlush);
-
-  t1LED = 0;
-  t2LED = 0;
-  t1FLUSH = 0;
-  t2FLUSH = 0;
 }
 
 void loop() {
+
   int tend = 0;
   int tstart = 0;
   tstart = millis();
+
   switch (flushState) {
     case FLUSH_FILE_1:
       flushFile(f1, logCounter1, logPosition1);
+      IMU_DELAY_TIME = 35;
       break;
     case FLUSH_FILE_2:
       flushFile(f2, logCounter2, logPosition2);
+      IMU_DELAY_TIME = 35;
       break;
     case RESET_FILES:
-      Serial.println("STATE: RESET_FILES");
       resetFiles();
       break;
     case TOGGLE_FLUSH_FLAGS:
-      Serial.println("STATE: TOGGLE_FLUSH_FLAGS");
       toggleFlushStates();
       break;
     case DONT_FLUSH:
+      IMU_DELAY_TIME = 40;
       break;
+    case UPDATE_FIRMWARE:
+      updateFirmware();
+      break;
+    case FLUSH_COUNTERS:
+      flushCounters();
+      break;
+
     default:
       break;
   }
@@ -285,43 +303,11 @@ void loop() {
     t1LED = t2LED;
   }
   tend = millis();
-}
+  if (tend - tstart > 40) {
+    //Serial.print("Loop time: ");
+    //Serial.println(tend - tstart);
+  }
 
-void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
-  Wire.beginTransmission(deviceAddress);
-  Wire.write(regAddress);
-  Wire.write(data);
-  Wire.endTransmission();
-}
-
-// read all 14 register
-void Read_RawValue(uint8_t deviceAddress, uint8_t regAddress) {
-  Wire.beginTransmission(deviceAddress);
-  Wire.write(regAddress);
-  Wire.endTransmission();
-  Wire.requestFrom(deviceAddress, (uint8_t)14);
-  AccelX = (((int16_t)Wire.read() << 8) | Wire.read());
-  AccelY = (((int16_t)Wire.read() << 8) | Wire.read());
-  AccelZ = (((int16_t)Wire.read() << 8) | Wire.read());
-  Temperature = (((int16_t)Wire.read() << 8) | Wire.read());
-  GyroX = (((int16_t)Wire.read() << 8) | Wire.read());
-  GyroY = (((int16_t)Wire.read() << 8) | Wire.read());
-  GyroZ = (((int16_t)Wire.read() << 8) | Wire.read());
-}
-
-//configure MPU6050
-void MPU6050_Init() {
-  delay(150);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SMPLRT_DIV, 0x07);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_1, 0x01);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_2, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_CONFIG, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_GYRO_CONFIG, 0x00);//set +/-250 degree/second full scale
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_CONFIG, 0x00);// set +/- 2g full scale
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_FIFO_EN, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_INT_ENABLE, 0x01);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SIGNAL_PATH_RESET, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_USER_CTRL, 0x00);
 }
 
 void readAndPublishImuData() {
@@ -364,8 +350,9 @@ void readAndPublishImuData() {
         int writtenBytes = f2.write(msg, copiedBytes);
         logCounter2++;
       }
-      totalMissed++;
+      totalMissedImu++;
     }
+    totalSentImu++;
     imuT0 = imuT1;
   }
 }
@@ -382,7 +369,25 @@ void readAndPublishGpsData() {
       if (strMsg.startsWith("$GNGGA"))
       {
         sMqttGpsMsg = mac + ',' + strMsg;
-        mqttClient.publish("gps/data", 0, true, sMqttGpsMsg.c_str());
+        pubCode = mqttClient.publish("gps/data", 0, true, sMqttGpsMsg.c_str());
+        if (pubCode > 0)
+        {
+          totalSentGps++;
+        }
+        else
+        {
+          if (writeIntoFlushFile1 == true) {
+            int writtenBytes = f1.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
+            f1.write("\r");
+            logCounter1++;
+          }
+          else {
+            int writtenBytes = f2.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
+            f2.write("\r");
+            logCounter2++;
+          }
+          totalMissedGps++;
+        }
       }
 
       //parse out the time so we can set the wemos clock
@@ -434,27 +439,20 @@ void flushFile(File &f, int &logCounter, int &logPosition) {
 
     int rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
 
-    //if (rc >= 1) {
-    flushedBytes += 1;
-    logPosition  += flushedBytes;
-    logCounter--;
-    //}
+    if (rc >= 1) {
+      flushedBytes += 1;
+      logPosition  += flushedBytes;
+      logCounter--;
+      totalSentLog++;
+    }
+    else
+      totalMissedLog++;
   }
   else {
     // nothing to flush so close the file and open appropriate file for writing
     logPosition = 0;
     flushState = DONT_FLUSH;
   }
-}
-
-void getFailedMsgCount() {
-  Serial.println(totalMissed);
-  String missed(totalMissed);
-
-  String m;
-
-  m = mac + "--" + missed;
-  //pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
 }
 
 void toggleFlushStates() {
@@ -476,28 +474,127 @@ void resetFiles() {
     f1.close();
     f2.close();
     f1 = LittleFS.open("/flushFile1.bin", "r");
-    f2 = LittleFS.open("/flushFile2.bin", "w");
-    logCounter2 = 0;
+    if (logCounter2 > 0) {
+      f2 = LittleFS.open("/flushFile2.bin", "a");
+    }
+    else {
+      f2 = LittleFS.open("/flushFile2.bin", "w");
+      logCounter2 = 0;
+    }
+
     logPosition1 = 0;
     f1.setTimeout(100);
     f2.setTimeout(100);
     flushState = FLUSH_FILE_1;
-    Serial.println("STATE: FLUSH_FILE_1");
   }
   if (flushingFile2 == true) {
     f1.close();
     f2.close();
-    f1 = LittleFS.open("/flushFile1.bin", "w");
     f2 = LittleFS.open("/flushFile2.bin", "r");
-    logCounter1 = 0;
+    if (logCounter1 > 0) {
+      f1 = LittleFS.open("/flushFile1.bin", "a");
+    }
+    else {
+      f1 = LittleFS.open("/flushFile1.bin", "w");
+      logCounter1 = 0;
+    }
+
     logPosition2 = 0;
     f1.setTimeout(100);
     f2.setTimeout(100);
     flushState = FLUSH_FILE_2;
-    Serial.println("STATE: FLUSH_FILE_2");
   }
 }
 
 void initiateFlush() {
-  flushState = TOGGLE_FLUSH_FLAGS;
+  if (flushState == UPDATE_FIRMWARE) {
+    return;
+  }
+  else
+    flushState = TOGGLE_FLUSH_FLAGS;
+}
+
+void updateFirmware() {
+  ESPhttpUpdate.closeConnectionsOnUpdate(false);
+
+  t_httpUpdate_return ret = ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      flushState = UPDATE_FIRMWARE;
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      flushState = UPDATE_COMPLETE;
+      update_finished();
+      break;
+
+    case HTTP_UPDATE_OK:
+      flushState = UPDATE_COMPLETE;
+      update_finished();
+      break;
+  }
+}
+
+void update_finished() {
+  flushState = UPDATE_COMPLETE;
+  String m;
+  m = mac + "," + VERSION;
+  pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
+}
+
+void setFlushState()
+{
+  prevFlushState = flushState;
+  flushState = FLUSH_COUNTERS;
+}
+
+void flushCounters()
+{
+  char buff[64];
+  int totalCached =0;
+  int totalSent   =0;
+
+  totalCached = logCounter1 + logCounter2;
+  totalSent = totalSentImu + totalSentGps + totalSentLog;
+  
+  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%d", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, totalCached, totalSentLog, totalSent);
+  mqttClient.publish("rb32/counters", 0, true, buff);
+  flushState = prevFlushState;
+}
+
+void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
+  Wire.beginTransmission(deviceAddress);
+  Wire.write(regAddress);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+
+// read all 14 register
+void Read_RawValue(uint8_t deviceAddress, uint8_t regAddress) {
+  Wire.beginTransmission(deviceAddress);
+  Wire.write(regAddress);
+  Wire.endTransmission();
+  Wire.requestFrom(deviceAddress, (uint8_t)14);
+  AccelX = (((int16_t)Wire.read() << 8) | Wire.read());
+  AccelY = (((int16_t)Wire.read() << 8) | Wire.read());
+  AccelZ = (((int16_t)Wire.read() << 8) | Wire.read());
+  Temperature = (((int16_t)Wire.read() << 8) | Wire.read());
+  GyroX = (((int16_t)Wire.read() << 8) | Wire.read());
+  GyroY = (((int16_t)Wire.read() << 8) | Wire.read());
+  GyroZ = (((int16_t)Wire.read() << 8) | Wire.read());
+}
+
+//configure MPU6050
+void MPU6050_Init() {
+  delay(150);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SMPLRT_DIV, 0x07);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_1, 0x01);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_2, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_CONFIG, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_GYRO_CONFIG, 0x00);//set +/-250 degree/second full scale
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_CONFIG, 0x00);// set +/- 2g full scale
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_FIFO_EN, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_INT_ENABLE, 0x01);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SIGNAL_PATH_RESET, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_USER_CTRL, 0x00);
 }
