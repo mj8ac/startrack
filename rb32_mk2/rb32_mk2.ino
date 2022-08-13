@@ -21,7 +21,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "3.1.7";
+const char* VERSION = "4.0.1";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -43,9 +43,12 @@ long loopTime   = 0;
 long timeAge    = 0;
 long lastGpsTimeUpdate  = 0;
 long IMU_DELAY_TIME     = 40;
+long FLUSH_DELAY_TIME   = 10;
 
 long imuT1 = 0;
 long imuT0 = 0;
+long flushT0 = 0;
+long flushT1 = 0;
 
 String mac;
 String strMsg;
@@ -431,7 +434,11 @@ void readAndPublishGpsData() {
 }
 
 void flushFile(File &f, int &logCounter, int &logPosition) {
-  if (logCounter > 0) {
+    flushT1 = millis();
+
+  if (flushT1 - flushT0 >= FLUSH_DELAY_TIME)
+  {
+    if (logCounter > 0) {
     memset(fLogs, 0, sizeof(fLogs));
     int flushedBytes = 0;
     f.seek(logPosition, SeekSet);
@@ -454,6 +461,10 @@ void flushFile(File &f, int &logCounter, int &logPosition) {
     logPosition = 0;
     flushState = DONT_FLUSH;
   }
+  }
+
+  flushT0 = flushT1;
+  
 }
 
 void toggleFlushStates() {
