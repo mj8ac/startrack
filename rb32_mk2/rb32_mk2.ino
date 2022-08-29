@@ -17,6 +17,8 @@
 
 #define MSG_BUFFER_SIZE (196)
 
+#define MQTT_MIN_FREE_MEMORY (8096)
+
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
