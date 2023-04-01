@@ -12,7 +12,8 @@
 #define WIFI_SSID "ST01"
 #define WIFI_PASSWORD "J9a5cxec"
 
-#define MQTT_HOST IPAddress(192, 168, 42, 1)
+//#define MQTT_HOST IPAddress(138, 68, 160, 221)
+#define MQTT_HOST IPAddress(192, 168, 1, 90)
 #define MQTT_PORT 1883
 
 #define MSG_BUFFER_SIZE (196)
@@ -23,7 +24,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.1";
+const char* VERSION = "4.0.8";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -46,6 +47,7 @@ long timeAge    = 0;
 long lastGpsTimeUpdate  = 0;
 long IMU_DELAY_TIME     = 40;
 long FLUSH_DELAY_TIME   = 10;
+unsigned long imuMsgId   = 0;
 
 long imuT1 = 0;
 long imuT0 = 0;
@@ -333,8 +335,9 @@ void readAndPublishImuData() {
     ecg = analogRead(a0);
     loopTime = millis();
     timeAge = loopTime - lastGpsTimeUpdate;
+    imuMsgId +=1;
     //int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+08.3f,\"Ay\":%+08.3f,\"Az\":%+08.3f,\"T\":%+08.3f,\"Gx\":%+08.3f,\"Gy\":%+08.3f,\"Gz\":%+08.3f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
-    int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
+    int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\",\"msgId\":\"%lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge, imuMsgId);
 #ifdef PRINT_DEBUG_MSGS
     Serial.print("Ax: "); Serial.print(Ax);
     Serial.print(" Ay: "); Serial.print(Ay);
@@ -345,7 +348,7 @@ void readAndPublishImuData() {
     Serial.print(" Gz: "); Serial.println(Gz);
     Serial.println(msg);
 #endif
-    pubCode = mqttClient.publish("imu/data", 0, true, msg);
+    pubCode = mqttClient.publish("imu/data", 1, true, msg);
 
     if (pubCode < 1) {
       if (writeIntoFlushFile1 == true) {
@@ -375,7 +378,7 @@ void readAndPublishGpsData() {
       if (strMsg.startsWith("$GNGGA"))
       {
         sMqttGpsMsg = mac + ',' + strMsg;
-        pubCode = mqttClient.publish("gps/data", 0, true, sMqttGpsMsg.c_str());
+        pubCode = mqttClient.publish("gps/data", 1, true, sMqttGpsMsg.c_str());
         if (pubCode > 0)
         {
           totalSentGps++;
@@ -463,10 +466,8 @@ void flushFile(File &f, int &logCounter, int &logPosition) {
     logPosition = 0;
     flushState = DONT_FLUSH;
   }
-  }
-
   flushT0 = flushT1;
-  
+  }  
 }
 
 void toggleFlushStates() {
