@@ -24,7 +24,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.8";
+const char* VERSION = "4.0.11";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -39,6 +39,7 @@ int  totalMissedImu = 0;
 int  totalSentLog   = 0;
 int  totalSentGps   = 0;
 int  totalSentImu   = 0;
+int  fromCache = 0;
 long lastBlink      = 0;
 
 long timeNow    = 0;
@@ -47,7 +48,8 @@ long timeAge    = 0;
 long lastGpsTimeUpdate  = 0;
 long IMU_DELAY_TIME     = 40;
 long FLUSH_DELAY_TIME   = 10;
-unsigned long imuMsgId   = 0;
+unsigned long imuMsgId  = 0;
+unsigned long gpsMsgId  = 0;
 
 long imuT1 = 0;
 long imuT0 = 0;
@@ -377,14 +379,30 @@ void readAndPublishGpsData() {
     {
       if (strMsg.startsWith("$GNGGA"))
       {
-        sMqttGpsMsg = mac + ',' + strMsg;
+        fromCache = 0;
+        sMqttGpsMsg = mac + ',';
+        sMqttGpsMsg += gpsMsgId;
+        sMqttGpsMsg += ',';
+        sMqttGpsMsg += fromCache;
+        sMqttGpsMsg += ',';
+        sMqttGpsMsg += strMsg;
         pubCode = mqttClient.publish("gps/data", 1, true, sMqttGpsMsg.c_str());
+        gpsMsgId += 1;
+        
         if (pubCode > 0)
         {
           totalSentGps++;
         }
         else
         {
+          fromCache = 1;
+          sMqttGpsMsg = mac + ',';
+          sMqttGpsMsg += gpsMsgId;
+          sMqttGpsMsg += ',';
+          sMqttGpsMsg += fromCache;
+          sMqttGpsMsg += ',';
+          sMqttGpsMsg += strMsg;
+          
           if (writeIntoFlushFile1 == true) {
             int writtenBytes = f1.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
             f1.write("\r");
