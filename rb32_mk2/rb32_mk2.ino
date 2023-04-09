@@ -24,7 +24,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.17";
+const char* VERSION = "4.0.18";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -132,10 +132,11 @@ enum FLUSH_STATE {
   DONT_FLUSH,
   UPDATE_FIRMWARE,
   UPDATE_COMPLETE,
+  START_UP,
   FLUSH_COUNTERS
 };
 
-FLUSH_STATE flushState = UPDATE_FIRMWARE;
+FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
 //#define PRINT_DEBUG_MSGS
 
@@ -187,6 +188,7 @@ void onMqttConnect(bool sessionPresent) {
   String m;
   m = mac + "," + VERSION + "," + "ONLINE";
   mqttClient.publish("rb32/data/status", 0, true, m.c_str());
+  flushState = UPDATE_FIRMWARE;
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -288,7 +290,7 @@ void loop() {
       IMU_DELAY_TIME = 40;
       break;
     case UPDATE_FIRMWARE:
-      if (updateFailCount < 200)
+      if (updateFailCount < 5)
         updateFirmware();
       else
       {
@@ -595,7 +597,7 @@ void update_finished() {
   flushState = UPDATE_COMPLETE;
   updateFailed = false;
   String m;
-  m = mac + "," + VERSION;
+  m = mac + "," + VERSION + ',' + "update complete";
   pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
   flusherCallBack.attach(5, initiateFlush);
   flushCountersCallBack.attach(2, setFlushState);
