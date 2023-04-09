@@ -1,4 +1,5 @@
 #include <ESP8266WiFi.h>
+#include <ESPping.h>
 #include <Ticker.h>
 #include <AsyncMqttClient.h>
 #include <Wire.h>
@@ -12,8 +13,7 @@
 #define WIFI_SSID "ST01"
 #define WIFI_PASSWORD "J9a5cxec"
 
-//#define MQTT_HOST IPAddress(138, 68, 160, 221)
-#define MQTT_HOST IPAddress(192, 168, 1, 90)
+#define MQTT_HOST "st01.local"
 #define MQTT_PORT 1883
 
 #define MSG_BUFFER_SIZE (196)
@@ -24,7 +24,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.11";
+const char* VERSION = "4.0.13";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -121,6 +121,8 @@ bool flushingFile1        = false;
 bool flushingFile2        = false;
 bool writeIntoFlushFile1  = true;
 
+bool updateFailed = true;
+
 enum FLUSH_STATE {
   FLUSH_FILE_1,
   FLUSH_FILE_2,
@@ -180,6 +182,10 @@ void onMqttConnect(bool sessionPresent) {
   uint16_t packetIdPub2 = mqttClient.publish("rb32/debug", 2, true, "test 3");
   printDebug(mac, "Publishing at QoS 2, packetId: ");
   printDebug(mac, String(packetIdPub2));
+
+  String m;
+  m = mac + "," + VERSION + "," + "ONLINE";
+  mqttClient.publish("rb32/data/status", 0, true, m.c_str());
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -337,7 +343,7 @@ void readAndPublishImuData() {
     ecg = analogRead(a0);
     loopTime = millis();
     timeAge = loopTime - lastGpsTimeUpdate;
-    imuMsgId +=1;
+    imuMsgId += 1;
     //int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+08.3f,\"Ay\":%+08.3f,\"Az\":%+08.3f,\"T\":%+08.3f,\"Gx\":%+08.3f,\"Gy\":%+08.3f,\"Gz\":%+08.3f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
     int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\",\"msgId\":\"%lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge, imuMsgId);
 #ifdef PRINT_DEBUG_MSGS
@@ -388,7 +394,7 @@ void readAndPublishGpsData() {
         sMqttGpsMsg += strMsg;
         pubCode = mqttClient.publish("gps/data", 1, true, sMqttGpsMsg.c_str());
         gpsMsgId += 1;
-        
+
         if (pubCode > 0)
         {
           totalSentGps++;
@@ -402,7 +408,7 @@ void readAndPublishGpsData() {
           sMqttGpsMsg += fromCache;
           sMqttGpsMsg += ',';
           sMqttGpsMsg += strMsg;
-          
+
           if (writeIntoFlushFile1 == true) {
             int writtenBytes = f1.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
             f1.write("\r");
@@ -457,35 +463,35 @@ void readAndPublishGpsData() {
 }
 
 void flushFile(File &f, int &logCounter, int &logPosition) {
-    flushT1 = millis();
+  flushT1 = millis();
 
   if (flushT1 - flushT0 >= FLUSH_DELAY_TIME)
   {
     if (logCounter > 0) {
-    memset(fLogs, 0, sizeof(fLogs));
-    int flushedBytes = 0;
-    f.seek(logPosition, SeekSet);
+      memset(fLogs, 0, sizeof(fLogs));
+      int flushedBytes = 0;
+      f.seek(logPosition, SeekSet);
 
-    flushedBytes = f.readBytesUntil('\r', fLogs, 196);
+      flushedBytes = f.readBytesUntil('\r', fLogs, 196);
 
-    int rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
+      int rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
 
-    if (rc >= 1) {
-      flushedBytes += 1;
-      logPosition  += flushedBytes;
-      logCounter--;
-      totalSentLog++;
+      if (rc >= 1) {
+        flushedBytes += 1;
+        logPosition  += flushedBytes;
+        logCounter--;
+        totalSentLog++;
+      }
+      else
+        totalMissedLog++;
     }
-    else
-      totalMissedLog++;
+    else {
+      // nothing to flush so close the file and open appropriate file for writing
+      logPosition = 0;
+      flushState = DONT_FLUSH;
+    }
+    flushT0 = flushT1;
   }
-  else {
-    // nothing to flush so close the file and open appropriate file for writing
-    logPosition = 0;
-    flushState = DONT_FLUSH;
-  }
-  flushT0 = flushT1;
-  }  
 }
 
 void toggleFlushStates() {
@@ -548,28 +554,42 @@ void initiateFlush() {
 }
 
 void updateFirmware() {
-  ESPhttpUpdate.closeConnectionsOnUpdate(false);
 
-  t_httpUpdate_return ret = ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
-  switch (ret) {
-    case HTTP_UPDATE_FAILED:
-      flushState = UPDATE_FIRMWARE;
-      break;
+    ESPhttpUpdate.closeConnectionsOnUpdate(false);
+    t_httpUpdate_return ret = ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+    switch (ret) {
+      case HTTP_UPDATE_FAILED:
+        update_failed();
+        break;
 
-    case HTTP_UPDATE_NO_UPDATES:
-      flushState = UPDATE_COMPLETE;
-      update_finished();
-      break;
+      case HTTP_UPDATE_NO_UPDATES:
+        flushState = UPDATE_COMPLETE;
+        update_finished();
+        break;
 
-    case HTTP_UPDATE_OK:
-      flushState = UPDATE_COMPLETE;
-      update_finished();
-      break;
+      case HTTP_UPDATE_OK:
+        flushState = UPDATE_COMPLETE;
+        update_finished();
+        break;
+      
+      default:
+        update_failed();
+        break;
+    }
   }
+
+void update_failed(){
+    updateFailed = true;
+    flushState = UPDATE_COMPLETE;
+    String m;
+    m = mac + "," + VERSION + "," + "failed to contact update server";
+    mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
 }
+
 
 void update_finished() {
   flushState = UPDATE_COMPLETE;
+  updateFailed = false;
   String m;
   m = mac + "," + VERSION;
   pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
@@ -584,12 +604,12 @@ void setFlushState()
 void flushCounters()
 {
   char buff[64];
-  int totalCached =0;
-  int totalSent   =0;
+  int totalCached = 0;
+  int totalSent   = 0;
 
   totalCached = logCounter1 + logCounter2;
   totalSent = totalSentImu + totalSentGps + totalSentLog;
-  
+
   snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%d, %d", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, totalCached, totalSentLog, totalMissedLog, totalSent);
   mqttClient.publish("rb32/counters", 0, true, buff);
   flushState = prevFlushState;
