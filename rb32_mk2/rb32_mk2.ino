@@ -24,7 +24,7 @@ char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.13";
+const char* VERSION = "4.0.17";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -40,6 +40,7 @@ int  totalSentLog   = 0;
 int  totalSentGps   = 0;
 int  totalSentImu   = 0;
 int  fromCache = 0;
+int  updateFailCount = 0;
 long lastBlink      = 0;
 
 long timeNow    = 0;
@@ -252,9 +253,6 @@ void setup() {
       //fRead = LittleFS.open("/dropped.txt", "r");
     }
 
-    flusherCallBack.attach(5, initiateFlush);
-    flushCountersCallBack.attach(2, setFlushState);
-
     // Add optional callback notifiers
     ESPhttpUpdate.onEnd(update_finished);
 
@@ -290,7 +288,15 @@ void loop() {
       IMU_DELAY_TIME = 40;
       break;
     case UPDATE_FIRMWARE:
-      updateFirmware();
+      if (updateFailCount < 200)
+        updateFirmware();
+      else
+      {
+        updateFailed = true;
+        flusherCallBack.attach(5, initiateFlush);
+        flushCountersCallBack.attach(2, setFlushState);
+        flushState = UPDATE_COMPLETE;
+      }
       break;
     case FLUSH_COUNTERS:
       flushCounters();
@@ -302,7 +308,6 @@ void loop() {
 
   readAndPublishImuData();
   readAndPublishGpsData();
-
 
   t2LED = millis();
   if ((t2LED - t1LED) >= 1000) {
@@ -554,36 +559,35 @@ void initiateFlush() {
 }
 
 void updateFirmware() {
+  ESPhttpUpdate.closeConnectionsOnUpdate(false);
+  t_httpUpdate_return ret = ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      update_failed();
+      break;
 
-    ESPhttpUpdate.closeConnectionsOnUpdate(false);
-    t_httpUpdate_return ret = ESPhttpUpdate.update(UPDATE_SERVER, 80, "/rb32update", VERSION);
-    switch (ret) {
-      case HTTP_UPDATE_FAILED:
-        update_failed();
-        break;
+    case HTTP_UPDATE_NO_UPDATES:
+      flushState = UPDATE_COMPLETE;
+      update_finished();
+      break;
 
-      case HTTP_UPDATE_NO_UPDATES:
-        flushState = UPDATE_COMPLETE;
-        update_finished();
-        break;
+    case HTTP_UPDATE_OK:
+      flushState = UPDATE_COMPLETE;
+      update_finished();
+      break;
 
-      case HTTP_UPDATE_OK:
-        flushState = UPDATE_COMPLETE;
-        update_finished();
-        break;
-      
-      default:
-        update_failed();
-        break;
-    }
+    default:
+      update_failed();
+      break;
   }
+}
 
-void update_failed(){
-    updateFailed = true;
-    flushState = UPDATE_COMPLETE;
-    String m;
-    m = mac + "," + VERSION + "," + "failed to contact update server";
-    mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
+void update_failed() {
+  flushState = UPDATE_FIRMWARE;
+  String m;
+  m = mac + "," + VERSION + "," + "failed to contact update server";
+  mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
+  updateFailCount += 1;
 }
 
 
@@ -593,6 +597,8 @@ void update_finished() {
   String m;
   m = mac + "," + VERSION;
   pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
+  flusherCallBack.attach(5, initiateFlush);
+  flushCountersCallBack.attach(2, setFlushState);
 }
 
 void setFlushState()
