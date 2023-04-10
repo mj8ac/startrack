@@ -10,11 +10,14 @@
 #include <LittleFS.h>
 #include <FS.h>
 
+// WARNING changing these settings could brick the loggers
+//---------------------------------------------------------------------
 #define WIFI_SSID "ST01"
 #define WIFI_PASSWORD "J9a5cxec"
-
 #define MQTT_HOST "st01.local"
 #define MQTT_PORT 1883
+const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
+// --------------------------------------------------------------------
 
 #define MSG_BUFFER_SIZE (196)
 
@@ -23,8 +26,7 @@
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
-const char* VERSION = "4.0.18";
+const char* VERSION = "4.0.19";
 
 int  ecg          = 0;
 int  rssi         = 0;
