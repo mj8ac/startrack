@@ -26,7 +26,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "4.0.19";
+const char* VERSION = "4.0.21";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -73,6 +73,7 @@ char szMins[3];
 char szSec[3];
 char szTime[12];
 char rx;
+char gngga[] = "$GNGGA";
 
 AsyncMqttClient mqttClient;
 Ticker mqttReconnectTimer;
@@ -410,22 +411,26 @@ void readAndPublishGpsData() {
         }
         else
         {
-          fromCache = 1;
-          sMqttGpsMsg = mac + ',';
-          sMqttGpsMsg += gpsMsgId;
-          sMqttGpsMsg += ',';
-          sMqttGpsMsg += fromCache;
-          sMqttGpsMsg += ',';
-          sMqttGpsMsg += strMsg;
+//          fromCache = 1;
+//          sMqttGpsMsg = mac + ',';
+//          sMqttGpsMsg += gpsMsgId;
+//          sMqttGpsMsg += ',';
+//          sMqttGpsMsg += fromCache;
+//          sMqttGpsMsg += ',';
+//          sMqttGpsMsg += strMsg;
 
           if (writeIntoFlushFile1 == true) {
-            int writtenBytes = f1.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
-            f1.write("\r");
+            int writtenBytes = f1.write(sMqttGpsMsg.c_str(), strlen(sMqttGpsMsg.c_str()));
+            String msg = "Written " + String(writtenBytes) + " to cache";
+            mqttClient.publish("gps/data/fails", 0, true, msg.c_str());
+            //f1.write("\r");
             logCounter1++;
           }
           else {
-            int writtenBytes = f2.write(sMqttGpsMsg.c_str(), sizeof(sMqttGpsMsg.c_str()));
-            f2.write("\r");
+            int writtenBytes = f2.write(sMqttGpsMsg.c_str(), strlen(sMqttGpsMsg.c_str()));
+            String msg = "Written " + String(writtenBytes) + " to cache";
+            mqttClient.publish("gps/data/fails", 0, true, msg.c_str());
+            //f2.write("\r");
             logCounter2++;
           }
           totalMissedGps++;
@@ -482,8 +487,13 @@ void flushFile(File &f, int &logCounter, int &logPosition) {
       f.seek(logPosition, SeekSet);
 
       flushedBytes = f.readBytesUntil('\r', fLogs, 196);
+      char* found = strstr(fLogs, gngga);
 
-      int rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
+      int rc = 0;
+      if (found != NULL)
+        rc = mqttClient.publish("gps/data/fails", 0, true, fLogs);
+      else
+        rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
 
       if (rc >= 1) {
         flushedBytes += 1;
