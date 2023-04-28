@@ -1,6 +1,5 @@
 #include <ESP8266WiFi.h>
 #include <ESPping.h>
-#include <Ticker.h>
 #include <AsyncMqttClient.h>
 #include <Wire.h>
 #include <TimeLib.h>
@@ -26,7 +25,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "4.0.22";
+const char* VERSION = "4.0.23";
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -491,9 +490,9 @@ void flushFile(File &f, int &logCounter, int &logPosition) {
 
       int rc = 0;
       if (found != NULL)
-        rc = mqttClient.publish("gps/data/fails", 0, true, fLogs);
+        rc = mqttClient.publish("gps/data/fails", 1, true, fLogs);
       else
-        rc = mqttClient.publish("imu/data/fails", 0, true, fLogs);
+        rc = mqttClient.publish("imu/data/fails", 1, true, fLogs);
 
       if (rc >= 1) {
         flushedBytes += 1;
