@@ -27,6 +27,8 @@ char fLogs[196];
 
 const char* VERSION = "4.0.23";
 
+uint8_t gpsTokenPosition = 0;
+
 int  ecg          = 0;
 int  rssi         = 0;
 int  pubCode      = 0;
@@ -116,6 +118,7 @@ int16_t AccelX, AccelY, AccelZ, Temperature, GyroX, GyroY, GyroZ;
 double Ax, Ay, Az, T, Gx, Gy, Gz;
 
 int period = 500;
+unsigned int lastPacketId = 0;
 
 unsigned int t1LED, t2LED, t1FLUSH, t2FLUSH;
 int ledState = LOW;
@@ -123,8 +126,10 @@ int ledState = LOW;
 bool flushingFile1        = false;
 bool flushingFile2        = false;
 bool writeIntoFlushFile1  = true;
-
 bool updateFailed = true;
+bool firstTransmit = true;
+bool sendNextMessage = true;
+
 
 enum FLUSH_STATE {
   FLUSH_FILE_1,
@@ -137,6 +142,46 @@ enum FLUSH_STATE {
   START_UP,
   FLUSH_COUNTERS
 };
+
+struct GpsData {
+  uint16_t msgId;
+  uint8_t  fromCache;
+  uint8_t  hh;
+  uint8_t  mm;
+  uint8_t  ss;
+  uint16_t lat_ddmm;
+  uint16_t lat_mmmmm;
+  uint16_t lon_dddmm;
+  uint16_t lon_mmmmm;
+  uint8_t  valid;
+  uint8_t  sats;
+  float    hdop;
+};
+
+struct ImuData {
+  int16_t ax;
+  int16_t ay;
+  int16_t az;
+  int16_t t;
+  int16_t gx;
+  int16_t gy;
+  int16_t gz;
+  int8_t  rssi;
+  uint8_t  hh;
+  uint8_t  mm;
+  uint8_t  ss;
+  uint32_t msgId;
+};
+
+const uint16_t GPS_BUFFER_SIZE = 800;
+const uint16_t IMU_BUFFER_SIZE = 100000;
+GpsData gpsQueue[GPS_BUFFER_SIZE];
+ImuData imuQueue[IMU_BUFFER_SIZE];
+
+uint8_t gpsReadPtr  = 0;
+uint8_t gpsWritePtr = 0;
+uint8_t imuReadPtr  = 0;
+uint8_t imuWritePtr = 0;
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
@@ -215,6 +260,43 @@ void onMqttUnsubscribe(uint16_t packetId) {
   printDebug(mac, String(packetId));
 }
 
+void onMqttPublish(uint16_t packetId) {
+  if (static_cast<uint16_t>(lastPacketId) == packetId){
+    sendNextMessage = true;
+  }
+
+  //  if (lastPacketId == packetId) {
+  //      if (!isGpsBufferEmpty())
+  //      {
+  //          GpsData* tmpGpsData = readFromGpsBuffer();
+  //          char sendBuffer[64];
+  //          snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%u%u%u,%f,%f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
+  //          lastPacketId = mqttClient.publish("gps/data", 1, true, msg);
+  //      }
+  //  }
+
+
+}
+
+void writeToGpsBuffer(const GpsData& element) {
+  gpsQueue[gpsWritePtr] = element; // write the element to the current write position
+  gpsWritePtr = (gpsWritePtr + 1) % GPS_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
+}
+
+GpsData* readFromGpsBuffer() {
+  GpsData* element = &gpsQueue[gpsReadPtr]; // read the element at the current read position
+  gpsReadPtr = (gpsReadPtr + 1) % GPS_BUFFER_SIZE; // increment the read pointer and wrap around if necessary
+  return element;
+}
+
+bool isGpsBufferEmpty() {
+  return gpsReadPtr == gpsWritePtr; // the buffer is empty if the read and write pointers are equal
+}
+
+bool isGpsBufferFull() {
+  return (gpsWritePtr + 1) % GPS_BUFFER_SIZE == gpsReadPtr; // the buffer is full if the next write position is equal to the read position
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.swap();
@@ -231,6 +313,7 @@ void setup() {
   mqttClient.onDisconnect(onMqttDisconnect);
   mqttClient.onSubscribe(onMqttSubscribe);
   mqttClient.onUnsubscribe(onMqttUnsubscribe);
+  mqttClient.onPublish(onMqttPublish);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 
   connectToWifi();
@@ -274,23 +357,6 @@ void loop() {
   tstart = millis();
 
   switch (flushState) {
-    case FLUSH_FILE_1:
-      flushFile(f1, logCounter1, logPosition1);
-      IMU_DELAY_TIME = 35;
-      break;
-    case FLUSH_FILE_2:
-      flushFile(f2, logCounter2, logPosition2);
-      IMU_DELAY_TIME = 35;
-      break;
-    case RESET_FILES:
-      resetFiles();
-      break;
-    case TOGGLE_FLUSH_FLAGS:
-      toggleFlushStates();
-      break;
-    case DONT_FLUSH:
-      IMU_DELAY_TIME = 40;
-      break;
     case UPDATE_FIRMWARE:
       if (updateFailCount < 5)
         updateFirmware();
@@ -300,17 +366,14 @@ void loop() {
         flusherCallBack.attach(5, initiateFlush);
         flushCountersCallBack.attach(2, setFlushState);
         flushState = UPDATE_COMPLETE;
+        sendNextMessage = true;
       }
       break;
-    case FLUSH_COUNTERS:
-      flushCounters();
-      break;
-
     default:
       break;
   }
 
-  readAndPublishImuData();
+  //readAndPublishImuData();
   readAndPublishGpsData();
 
   t2LED = millis();
@@ -331,7 +394,6 @@ void loop() {
     //Serial.print("Loop time: ");
     //Serial.println(tend - tstart);
   }
-
 }
 
 void readAndPublishImuData() {
@@ -383,7 +445,6 @@ void readAndPublishImuData() {
   }
 }
 
-
 void readAndPublishGpsData() {
   while (Serial.available() > 0) {
     rx = Serial.read();
@@ -401,39 +462,70 @@ void readAndPublishGpsData() {
         sMqttGpsMsg += fromCache;
         sMqttGpsMsg += ',';
         sMqttGpsMsg += strMsg;
-        pubCode = mqttClient.publish("gps/data", 1, true, sMqttGpsMsg.c_str());
+
+        GpsData g;
+        gpsTokenPosition = 0;
+        char* token;
+        const char* gpsMsg = sMqttGpsMsg.c_str();
+        token = strtok(const_cast<char*>(gpsMsg), ",");
+        while (token != NULL) {
+          gpsTokenPosition++;
+
+          if (gpsTokenPosition == 2) {
+            g.msgId = atoi(token);                      // message ID
+          } else if (gpsTokenPosition == 3) {
+            g.fromCache = atoi(token);                  // fromCahce
+          } else if (gpsTokenPosition == 5) {
+            String s = String(token);                   // time
+            g.hh = atoi(s.substring(0, 2).c_str());     // hh
+            g.mm = atoi(s.substring(2, 4).c_str());     // mm
+            g.ss = atoi(s.substring(4, 6).c_str());     // ss
+          } else if (gpsTokenPosition == 6) {
+            String lat = String(token);
+            g.lat_ddmm = static_cast<uint16_t>(lat.substring(0, 4).toInt());
+            g.lat_mmmmm = static_cast<uint16_t>(lat.substring(5).toInt());               // lat
+          } else if (gpsTokenPosition == 8) {
+            String lon = String(token);
+            g.lon_dddmm = static_cast<uint16_t>(lon.substring(0, 5).toInt());
+            g.lon_mmmmm = static_cast<uint16_t>(lon.substring(6).toInt());
+          } else if (gpsTokenPosition == 10) {
+            g.valid = atoi(token);              // valid
+          } else if (gpsTokenPosition == 11) {
+            g.sats = atoi(token);               // sats
+          } else if (gpsTokenPosition == 12) {
+            g.hdop = atof(token);               // hdop
+          }
+
+          token = strtok(NULL, ",");
+        }
+
+        writeToGpsBuffer(g);
+        mqttClient.publish("gps/data", 0, true, "written to gps buffer");
+        char x[32];
+        snprintf(x, sizeof(x), "sendNextMessage = %d", sendNextMessage);
+        mqttClient.publish("gps/data", 0, true, x);        
+        if (sendNextMessage == true) {
+          GpsData* tmpGpsData = readFromGpsBuffer();
+          char sendBuffer[64];
+          snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%04d.%05d,%05d.%05d,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat_ddmm, tmpGpsData->lat_mmmmm, tmpGpsData->lon_dddmm, tmpGpsData->lon_mmmmm, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
+          lastPacketId = mqttClient.publish("gps/data", 1, true, sendBuffer);
+          sendNextMessage = false;
+          char dbg[32];
+          snprintf(dbg, sizeof(dbg), "Sent gps msg: %u", lastPacketId);
+          mqttClient.publish("rb32/debug", 0, true, dbg);
+        }
+        //String heapSize = String(ESP.getFreeHeap(), DEC);
+        //mqttClient.publish("rb32/debug", 0, true, heapSize.c_str());
+        //        if (firstTransmit == true){
+        //          mqttClient.publish("gps/data", 1, true, "first gps transmit");
+        //          GpsData* tmpGpsData = readFromGpsBuffer();
+        //          char sendBuffer[64];
+        //          snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%04.5f,%05.5f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
+        //          lastPacketId = mqttClient.publish("gps/data", 1, true, msg);
+        //          firstTransmit = false;
+        //        }
+
         gpsMsgId += 1;
-
-        if (pubCode > 0)
-        {
-          totalSentGps++;
-        }
-        else
-        {
-//          fromCache = 1;
-//          sMqttGpsMsg = mac + ',';
-//          sMqttGpsMsg += gpsMsgId;
-//          sMqttGpsMsg += ',';
-//          sMqttGpsMsg += fromCache;
-//          sMqttGpsMsg += ',';
-//          sMqttGpsMsg += strMsg;
-
-          if (writeIntoFlushFile1 == true) {
-            int writtenBytes = f1.write(sMqttGpsMsg.c_str(), strlen(sMqttGpsMsg.c_str()));
-            String msg = "Written " + String(writtenBytes) + " to cache";
-            mqttClient.publish("gps/data/fails", 0, true, msg.c_str());
-            //f1.write("\r");
-            logCounter1++;
-          }
-          else {
-            int writtenBytes = f2.write(sMqttGpsMsg.c_str(), strlen(sMqttGpsMsg.c_str()));
-            String msg = "Written " + String(writtenBytes) + " to cache";
-            mqttClient.publish("gps/data/fails", 0, true, msg.c_str());
-            //f2.write("\r");
-            logCounter2++;
-          }
-          totalMissedGps++;
-        }
       }
 
       //parse out the time so we can set the wemos clock
