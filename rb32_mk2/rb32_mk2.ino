@@ -376,17 +376,20 @@ void loop() {
   //readAndPublishImuData();
   readAndPublishGpsData();
 
-  if (gpsWritePtr > 1500) {
+  if (WiFi.isConnected() && mqttClient.connected()) {
     if (sendNextMessage == true && !isGpsBufferEmpty()) {
       GpsData* tmpGpsData = readFromGpsBuffer();
       char sendBuffer[64];
       snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%04d.%05d,%05d.%05d,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat_ddmm, tmpGpsData->lat_mmmmm, tmpGpsData->lon_dddmm, tmpGpsData->lon_mmmmm, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
       int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
 
-      if (rc > 0){
+      if (rc > 0) {
         lastPacketId = rc;
       }
-      
+      else {
+        gpsReadPtr = (gpsReadPtr - 1) % GPS_BUFFER_SIZE; // decrement the read pointer and wrap around if necessary
+      }
+
       sendNextMessage = false;
 
       char dbg[32];
@@ -394,7 +397,6 @@ void loop() {
       mqttClient.publish("rb32/debug", 0, true, dbg);
     }
   }
-
 
   t2LED = millis();
   if ((t2LED - t1LED) >= 1000) {
