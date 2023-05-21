@@ -149,10 +149,12 @@ struct GpsData {
   uint8_t  hh;
   uint8_t  mm;
   uint8_t  ss;
-  uint16_t lat_ddmm;
-  uint16_t lat_mmmmm;
-  uint16_t lon_dddmm;
-  uint16_t lon_mmmmm;
+  float    lat;
+  float    lon;
+//  uint16_t lat_ddmm;
+//  uint16_t lat_mmmmm;
+//  uint16_t lon_dddmm;
+//  uint16_t lon_mmmmm;
   uint8_t  valid;
   uint8_t  sats;
   float    hdop;
@@ -380,7 +382,7 @@ void loop() {
     if (sendNextMessage == true && !isGpsBufferEmpty()) {
       GpsData* tmpGpsData = readFromGpsBuffer();
       char sendBuffer[64];
-      snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%04d.%05d,%05d.%05d,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat_ddmm, tmpGpsData->lat_mmmmm, tmpGpsData->lon_dddmm, tmpGpsData->lon_mmmmm, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
+      snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%f,%f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
       int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
 
       if (rc > 0) {
@@ -503,13 +505,15 @@ void readAndPublishGpsData() {
             g.mm = atoi(s.substring(2, 4).c_str());     // mm
             g.ss = atoi(s.substring(4, 6).c_str());     // ss
           } else if (gpsTokenPosition == 6) {
-            String lat = String(token);
-            g.lat_ddmm = static_cast<uint16_t>(lat.substring(0, 4).toInt());
-            g.lat_mmmmm = static_cast<uint16_t>(lat.substring(5).toInt());               // lat
+            g.lat = atof(token);
+//            String lat = String(token);
+//            g.lat_ddmm = static_cast<uint16_t>(lat.substring(0, 4).toInt());
+//            g.lat_mmmmm = static_cast<uint16_t>(lat.substring(5).toInt());               // lat
           } else if (gpsTokenPosition == 8) {
-            String lon = String(token);
-            g.lon_dddmm = static_cast<uint16_t>(lon.substring(0, 5).toInt());
-            g.lon_mmmmm = static_cast<uint16_t>(lon.substring(6).toInt());
+            g.lon = atof(token);
+//            String lon = String(token);
+//            g.lon_dddmm = static_cast<uint16_t>(lon.substring(0, 5).toInt());
+//            g.lon_mmmmm = static_cast<uint16_t>(lon.substring(6).toInt());
           } else if (gpsTokenPosition == 10) {
             g.valid = static_cast<uint8_t>(atoi(token));              // valid
           } else if (gpsTokenPosition == 11) {
