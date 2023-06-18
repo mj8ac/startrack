@@ -300,11 +300,9 @@ void addToTxQueue(int typeID, int index) {
       txQueue[txqWritePtr].typeId = typeID;
       txQueue[txqWritePtr].index = index; // write the element to the current write position
       txqWritePtr = (txqWritePtr + 1) % TXQUEUE_SIZE; // increment the write pointer and wrap around if necessary
-      
 }
 
 TxQueue* readFromTxQueue() {
-//  mqttClient.publish("rb32/debug", 0, true, "Reading from Tx Queue");
   String readPtr(txqReadPtr);
   readPtr = "Read Position: " + readPtr;
   mqttClient.publish("rb32/debug", 0, true, readPtr.c_str());
@@ -321,9 +319,11 @@ bool isTxQueueFull() {
   return (txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr;
 }
 //==========================================================================================================================================
-void writeToImuBuffer(const ImuData& element) {
+int writeToImuBuffer(const ImuData& element) {
   imuQueue[imuWritePtr] = element; // write the element to the current write position
+  int index = imuWritePtr;
   imuWritePtr = (imuWritePtr + 1) % IMU_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
+  return index;
 }
 
 ImuData* readFromImuBuffer() {
@@ -436,8 +436,12 @@ void loop() {
       break;
   }
   
-  //readAndPublishImuData();
-  int index = readAndBufferGpsData();
+  int index = readAndBufferImuData();
+  if (index != -1){
+    addToTxQueue(0, index);
+  }
+  
+  index = readAndBufferGpsData();
   if (index != -1){
     addToTxQueue(1,index);
   }
@@ -472,7 +476,7 @@ void publishFromTxQueue(){
   if (sendNextMessage == true && !isTxQueueEmpty()){
     TxQueue* tmpTxqData = readFromTxQueue();
     if (tmpTxqData->typeId == 0){
-      //publishImuData(tmpTxqData->index);
+      publishImuData(tmpTxqData->index);
     }
     else if (tmpTxqData->typeId == 1){
       publishGpsData(tmpTxqData->index);
@@ -481,9 +485,9 @@ void publishFromTxQueue(){
 }
 
 
-void readAndBufferImuData() {
+int readAndBufferImuData() {
   imuT1 = millis();
-
+  int rc = -1;
   if (imuT1 - imuT0 >= IMU_DELAY_TIME)
   {
     rssi = WiFi.RSSI();
@@ -506,7 +510,7 @@ void readAndBufferImuData() {
     imu.ms = timeAge;
     imu.msgId = imuMsgId;
 
-    writeToImuBuffer(imu);
+    rc = writeToImuBuffer(imu);
 
     //mqttClient.publish("rb32/imu/debug", 0, true, "written to imu buffer");
     //char x[64];
@@ -517,6 +521,8 @@ void readAndBufferImuData() {
     totalSentImu++;
     imuT0 = imuT1;
   }
+
+  return rc;
 }
 
 void publishImuData(int index) {
@@ -546,7 +552,7 @@ void publishImuData(int index) {
       txqReadPtr = (txqReadPtr - 1) % TXQUEUE_SIZE; // decrement the read pointer and wrap around if necessary
     }
 
-    sendNextImuMessage = false;
+    sendNextMessage = false;
 
 //    char dbg[64];
 //    snprintf(dbg, sizeof(dbg), "Sent imu msg: %u, imuReadPtr: %u", lastPacketId, txqReadPtr);
