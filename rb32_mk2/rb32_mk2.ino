@@ -25,9 +25,14 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "4.0.23";
+const char* VERSION = "4.0.24";
 
 uint8_t gpsTokenPosition = 0;
+
+uint8_t dHour = 0;
+uint8_t dMin = 0;
+uint8_t dSec = 0;
+uint32_t dImuMsgId;
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -52,8 +57,8 @@ long timeAge    = 0;
 long lastGpsTimeUpdate  = 0;
 long IMU_DELAY_TIME     = 40;
 long FLUSH_DELAY_TIME   = 10;
-unsigned long imuMsgId  = 0;
-unsigned long gpsMsgId  = 0;
+unsigned int imuMsgId  = 0;
+uint16_t gpsMsgId  = 0;
 
 long imuT1 = 0;
 long imuT0 = 0;
@@ -119,6 +124,7 @@ double Ax, Ay, Az, T, Gx, Gy, Gz;
 
 int period = 500;
 unsigned int lastPacketId = 0;
+unsigned int lastImuPacketId = 0;
 
 unsigned int t1LED, t2LED, t1FLUSH, t2FLUSH;
 int ledState = LOW;
@@ -129,7 +135,7 @@ bool writeIntoFlushFile1  = true;
 bool updateFailed = true;
 bool firstTransmit = true;
 bool sendNextMessage = true;
-
+bool sendNextImuMessage = true;
 
 enum FLUSH_STATE {
   FLUSH_FILE_1,
@@ -151,10 +157,6 @@ struct GpsData {
   uint8_t  ss;
   float    lat;
   float    lon;
-//  uint16_t lat_ddmm;
-//  uint16_t lat_mmmmm;
-//  uint16_t lon_dddmm;
-//  uint16_t lon_mmmmm;
   uint8_t  valid;
   uint8_t  sats;
   float    hdop;
@@ -172,18 +174,28 @@ struct ImuData {
   uint8_t  hh;
   uint8_t  mm;
   uint8_t  ss;
+  uint16_t ms;
   uint32_t msgId;
 };
 
-const uint16_t GPS_BUFFER_SIZE = 1600;
-const uint16_t IMU_BUFFER_SIZE = 100000;
+typedef struct {
+  uint16_t typeId;
+  int index;
+} TxQueue;
+
+const uint16_t GPS_BUFFER_SIZE = 60;
+const uint16_t IMU_BUFFER_SIZE = 1;
+const uint16_t TXQUEUE_SIZE = 60;
 GpsData gpsQueue[GPS_BUFFER_SIZE];
 ImuData imuQueue[IMU_BUFFER_SIZE];
+TxQueue txQueue[TXQUEUE_SIZE];
 
 uint16_t gpsReadPtr  = 0;
 uint16_t gpsWritePtr = 0;
 uint16_t imuReadPtr  = 0;
 uint16_t imuWritePtr = 0;
+uint16_t txqReadPtr = 0;
+uint16_t txqWritePtr = 0;
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
@@ -263,26 +275,76 @@ void onMqttUnsubscribe(uint16_t packetId) {
 }
 
 void onMqttPublish(uint16_t packetId) {
+  char dbg[32];
+  snprintf(dbg, sizeof(dbg), "ACK gps msg: %u", packetId);
+  mqttClient.publish("rb32/debug", 0, true, dbg);
   if (static_cast<uint16_t>(lastPacketId) == packetId) {
     sendNextMessage = true;
   }
-
-  //  if (lastPacketId == packetId) {
-  //      if (!isGpsBufferEmpty())
-  //      {
-  //          GpsData* tmpGpsData = readFromGpsBuffer();
-  //          char sendBuffer[64];
-  //          snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%u%u%u,%f,%f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
-  //          lastPacketId = mqttClient.publish("gps/data", 1, true, msg);
-  //      }
-  //  }
-
-
 }
 
-void writeToGpsBuffer(const GpsData& element) {
+//===========================================================================================================================================
+//void writeToTxQueue(ImuData*  ptrImudata) {
+//  if (ptrImudata){
+//      txQueue[txqWritePtr].typeId = 0;
+//      txQueue[txqWritePtr].data = static_cast<void*>(ptrImudata); // write the element to the current write position
+//      txqWritePtr = (txqWritePtr + 1) % (TXQUEUE_SIZE); // increment the write pointer and wrap around if necessary
+//  }
+//
+//}
+
+void addToTxQueue(int typeID, int index) {
+      String writePtr(txqWritePtr);
+      writePtr = "Write Position: " + writePtr; 
+      mqttClient.publish("rb32/debug", 0, true, writePtr.c_str());
+      txQueue[txqWritePtr].typeId = typeID;
+      txQueue[txqWritePtr].index = index; // write the element to the current write position
+      txqWritePtr = (txqWritePtr + 1) % TXQUEUE_SIZE; // increment the write pointer and wrap around if necessary
+      
+}
+
+TxQueue* readFromTxQueue() {
+//  mqttClient.publish("rb32/debug", 0, true, "Reading from Tx Queue");
+  String readPtr(txqReadPtr);
+  readPtr = "Read Position: " + readPtr;
+  mqttClient.publish("rb32/debug", 0, true, readPtr.c_str());
+  TxQueue* element = &txQueue[txqReadPtr]; // read the element at the current read position
+  txqReadPtr = (txqReadPtr + 1) % TXQUEUE_SIZE; // increment the read pointer and wrap around if necessary
+  return element;
+}
+
+bool isTxQueueEmpty() {
+  return txqWritePtr == txqReadPtr;
+}
+
+bool isTxQueueFull() {
+  return (txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr;
+}
+//==========================================================================================================================================
+void writeToImuBuffer(const ImuData& element) {
+  imuQueue[imuWritePtr] = element; // write the element to the current write position
+  imuWritePtr = (imuWritePtr + 1) % IMU_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
+}
+
+ImuData* readFromImuBuffer() {
+  ImuData* element = &imuQueue[imuReadPtr]; // read the element at the current read position
+  imuReadPtr = (imuReadPtr + 1) % IMU_BUFFER_SIZE; // increment the read pointer and wrap around if necessary
+  return element;
+}
+
+bool isImuBufferEmpty() {
+  return imuReadPtr == imuWritePtr; // the buffer is empty if the read and write pointers are equal
+}
+
+bool isImuBufferFull() {
+  return (imuWritePtr + 1) % IMU_BUFFER_SIZE == imuReadPtr; // the buffer is full if the next write position is equal to the read position
+}
+//===========================================================================================================================================
+int writeToGpsBuffer(const GpsData& element) {
   gpsQueue[gpsWritePtr] = element; // write the element to the current write position
+  int index = gpsWritePtr;
   gpsWritePtr = (gpsWritePtr + 1) % GPS_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
+  return index;
 }
 
 GpsData* readFromGpsBuffer() {
@@ -298,7 +360,7 @@ bool isGpsBufferEmpty() {
 bool isGpsBufferFull() {
   return (gpsWritePtr + 1) % GPS_BUFFER_SIZE == gpsReadPtr; // the buffer is full if the next write position is equal to the read position
 }
-
+//===========================================================================================================================================
 void setup() {
   Serial.begin(9600);
   Serial.swap();
@@ -360,44 +422,30 @@ void loop() {
 
   switch (flushState) {
     case UPDATE_FIRMWARE:
-      if (updateFailCount < 5)
+      if (updateFailCount < 1)
         updateFirmware();
       else
       {
         updateFailed = true;
-        //flusherCallBack.attach(5, initiateFlush);
         flushCountersCallBack.attach(2, setFlushState);
         flushState = UPDATE_COMPLETE;
-        sendNextMessage = true;
+        //sendNextMessage = true;
       }
       break;
     default:
       break;
   }
-
+  
   //readAndPublishImuData();
-  readAndPublishGpsData();
+  int index = readAndBufferGpsData();
+  if (index != -1){
+    addToTxQueue(1,index);
+  }
 
   if (WiFi.isConnected() && mqttClient.connected()) {
-    if (sendNextMessage == true && !isGpsBufferEmpty()) {
-      GpsData* tmpGpsData = readFromGpsBuffer();
-      char sendBuffer[64];
-      snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%f,%f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
-      int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
-
-      if (rc > 0) {
-        lastPacketId = rc;
-      }
-      else {
-        gpsReadPtr = (gpsReadPtr - 1) % GPS_BUFFER_SIZE; // decrement the read pointer and wrap around if necessary
-      }
-
-      sendNextMessage = false;
-
-      char dbg[32];
-      snprintf(dbg, sizeof(dbg), "Sent gps msg: %u", lastPacketId);
-      mqttClient.publish("rb32/debug", 0, true, dbg);
-    }
+    //publishGpsData();
+    //publishImuData();
+    publishFromTxQueue();
   }
 
   t2LED = millis();
@@ -420,56 +468,115 @@ void loop() {
   }
 }
 
-void readAndPublishImuData() {
+void publishFromTxQueue(){
+  if (sendNextMessage == true && !isTxQueueEmpty()){
+    TxQueue* tmpTxqData = readFromTxQueue();
+    if (tmpTxqData->typeId == 0){
+      //publishImuData(tmpTxqData->index);
+    }
+    else if (tmpTxqData->typeId == 1){
+      publishGpsData(tmpTxqData->index);
+    }
+  }
+}
+
+
+void readAndBufferImuData() {
   imuT1 = millis();
 
   if (imuT1 - imuT0 >= IMU_DELAY_TIME)
   {
     rssi = WiFi.RSSI();
     Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-    //divide each with their sensitivity scale factor
-    Ax = (double)AccelX / AccelScaleFactor;
-    Ay = (double)AccelY / AccelScaleFactor;
-    Az = (double)AccelZ / AccelScaleFactor;
-    T  = (double)Temperature / 340 + 36.53; //temperature formula
-    Gx = (double)GyroX / GyroScaleFactor;
-    Gy = (double)GyroY / GyroScaleFactor;
-    Gz = (double)GyroZ / GyroScaleFactor;
-    ecg = analogRead(a0);
     loopTime = millis();
     timeAge = loopTime - lastGpsTimeUpdate;
-    imuMsgId += 1;
-    //int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+08.3f,\"Ay\":%+08.3f,\"Az\":%+08.3f,\"T\":%+08.3f,\"Gx\":%+08.3f,\"Gy\":%+08.3f,\"Gz\":%+08.3f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge);
-    int copiedBytes = snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04lu\",\"msgId\":\"%lu\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, hour(), minute(), second(), timeAge, imuMsgId);
-#ifdef PRINT_DEBUG_MSGS
-    Serial.print("Ax: "); Serial.print(Ax);
-    Serial.print(" Ay: "); Serial.print(Ay);
-    Serial.print(" Az: "); Serial.print(Az);
-    Serial.print(" T: "); Serial.print(T);
-    Serial.print(" Gx: "); Serial.print(Gx);
-    Serial.print(" Gy: "); Serial.print(Gy);
-    Serial.print(" Gz: "); Serial.println(Gz);
-    Serial.println(msg);
-#endif
-    pubCode = mqttClient.publish("imu/data", 1, true, msg);
+    ImuData imu;
 
-    if (pubCode < 1) {
-      if (writeIntoFlushFile1 == true) {
-        int writtenBytes = f1.write(msg, copiedBytes);
-        logCounter1++;
-      }
-      else {
-        int writtenBytes = f2.write(msg, copiedBytes);
-        logCounter2++;
-      }
-      totalMissedImu++;
-    }
+    imu.ax = AccelX;
+    imu.ay = AccelY;
+    imu.az = AccelZ;
+    imu.t = Temperature;
+    imu.gx = GyroX;
+    imu.gy = GyroY;
+    imu.gz = GyroZ;
+    imu.rssi = rssi;
+    imu.hh = hour();
+    imu.mm = minute();
+    imu.ss = second();
+    imu.ms = timeAge;
+    imu.msgId = imuMsgId;
+
+    writeToImuBuffer(imu);
+
+    //mqttClient.publish("rb32/imu/debug", 0, true, "written to imu buffer");
+    //char x[64];
+    //snprintf(x, sizeof(x), "sendNextImuMessage = %d, imuWritePtr: %u", sendNextImuMessage, imuWritePtr);
+    //mqttClient.publish("rb32/imu/debug", 0, true, x);
+
+    imuMsgId += 1;
     totalSentImu++;
     imuT0 = imuT1;
   }
 }
 
-void readAndPublishGpsData() {
+void publishImuData(int index) {
+    ImuData* tmpImuData = &imuQueue[index];;
+    //divide each with their sensitivity scale factor
+    Ax = static_cast<double>(tmpImuData->ax) / AccelScaleFactor;
+    Ay = static_cast<double>(tmpImuData->ay) / AccelScaleFactor;
+    Az = static_cast<double>(tmpImuData->az) / AccelScaleFactor;
+    T  = static_cast<double>(tmpImuData->t) / 340 + 36.53; //temperature formula
+    Gx = static_cast<double>(tmpImuData->gx) / GyroScaleFactor;
+    Gy = static_cast<double>(tmpImuData->gy) / GyroScaleFactor;
+    Gz = static_cast<double>(tmpImuData->gz) / GyroScaleFactor;
+    rssi = tmpImuData->rssi;
+    dHour = tmpImuData->hh;
+    dMin = tmpImuData->mm;
+    dSec = tmpImuData->ss;
+    timeAge = tmpImuData->ms;
+    dImuMsgId = tmpImuData->msgId;
+    snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04u\",\"msgId\":\"%u\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, dHour, dMin, dSec, timeAge, dImuMsgId);
+
+    int rc = mqttClient.publish("imu/data", 1, true, msg);
+
+    if (rc > 0) {
+      lastPacketId = rc;
+    }
+    else {
+      txqReadPtr = (txqReadPtr - 1) % TXQUEUE_SIZE; // decrement the read pointer and wrap around if necessary
+    }
+
+    sendNextImuMessage = false;
+
+//    char dbg[64];
+//    snprintf(dbg, sizeof(dbg), "Sent imu msg: %u, imuReadPtr: %u", lastPacketId, txqReadPtr);
+//    mqttClient.publish("rb32/imu/debug", 0, true, dbg);
+  
+}
+
+void publishGpsData(int index) {
+    GpsData* tmpGpsData = &gpsQueue[index];
+    char sendBuffer[64];
+    snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%f,%f,%u,%u,%f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
+    int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
+
+    if (rc > 0) {
+      lastPacketId = rc;
+    }
+    else {
+      txqReadPtr = (txqReadPtr - 1) % TXQUEUE_SIZE; // decrement the read pointer and wrap around if necessary
+    }
+
+    sendNextMessage = false;
+
+    char dbg[32];
+    snprintf(dbg, sizeof(dbg), "Sent gps msg: %u", lastPacketId);
+    mqttClient.publish("rb32/debug", 0, true, dbg);
+}
+
+
+int readAndBufferGpsData() {
+  int rc = -1;
   while (Serial.available() > 0) {
     rx = Serial.read();
     if (rx != '\n')
@@ -496,9 +603,9 @@ void readAndPublishGpsData() {
           gpsTokenPosition++;
 
           if (gpsTokenPosition == 2) {
-            g.msgId = atoi(token);                      // message ID
+            g.msgId = static_cast<uint16_t>(atoi(token));                      // message ID
           } else if (gpsTokenPosition == 3) {
-            g.fromCache = atoi(token);                  // fromCahce
+            g.fromCache = static_cast<uint8_t>(atoi(token));                  // fromCahce
           } else if (gpsTokenPosition == 5) {
             String s = String(token);                   // time
             g.hh = atoi(s.substring(0, 2).c_str());     // hh
@@ -506,14 +613,8 @@ void readAndPublishGpsData() {
             g.ss = atoi(s.substring(4, 6).c_str());     // ss
           } else if (gpsTokenPosition == 6) {
             g.lat = atof(token);
-//            String lat = String(token);
-//            g.lat_ddmm = static_cast<uint16_t>(lat.substring(0, 4).toInt());
-//            g.lat_mmmmm = static_cast<uint16_t>(lat.substring(5).toInt());               // lat
           } else if (gpsTokenPosition == 8) {
             g.lon = atof(token);
-//            String lon = String(token);
-//            g.lon_dddmm = static_cast<uint16_t>(lon.substring(0, 5).toInt());
-//            g.lon_mmmmm = static_cast<uint16_t>(lon.substring(6).toInt());
           } else if (gpsTokenPosition == 10) {
             g.valid = static_cast<uint8_t>(atoi(token));              // valid
           } else if (gpsTokenPosition == 11) {
@@ -525,11 +626,11 @@ void readAndPublishGpsData() {
           token = strtok(NULL, ",");
         }
 
-        writeToGpsBuffer(g);
-        mqttClient.publish("gps/data", 0, true, "written to gps buffer");
-        char x[64];
-        snprintf(x, sizeof(x), "sendNextMessage = %d, gpsWritePtr: %u", sendNextMessage, gpsWritePtr);
-        mqttClient.publish("gps/data", 0, true, x);
+        rc = writeToGpsBuffer(g);
+//        mqttClient.publish("rb32/gps/debug", 0, true, "written to gps buffer");
+//        char x[64];
+//        snprintf(x, sizeof(x), "sendNextMessage = %d, gpsWritePtr: %u", sendNextMessage, gpsWritePtr);
+//        mqttClient.publish("rb32/gps/debug", 0, true, x);
 
         gpsMsgId += 1;
       }
@@ -571,6 +672,7 @@ void readAndPublishGpsData() {
       break;
     }
   }
+  return rc;
 }
 
 void updateFirmware() {
