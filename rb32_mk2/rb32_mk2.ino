@@ -184,8 +184,8 @@ typedef struct {
 } TxQueue;
 
 const uint16_t GPS_BUFFER_SIZE = 60;
-const uint16_t IMU_BUFFER_SIZE = 1;
-const uint16_t TXQUEUE_SIZE = 60;
+const uint16_t IMU_BUFFER_SIZE = 1000;
+const uint16_t TXQUEUE_SIZE = 700;
 GpsData gpsQueue[GPS_BUFFER_SIZE];
 ImuData imuQueue[IMU_BUFFER_SIZE];
 TxQueue txQueue[TXQUEUE_SIZE];
@@ -277,7 +277,7 @@ void onMqttUnsubscribe(uint16_t packetId) {
 void onMqttPublish(uint16_t packetId) {
   char dbg[32];
   snprintf(dbg, sizeof(dbg), "ACK gps msg: %u", packetId);
-  mqttClient.publish("rb32/debug", 0, true, dbg);
+  //mqttClient.publish("rb32/debug", 0, true, dbg);
   if (static_cast<uint16_t>(lastPacketId) == packetId) {
     sendNextMessage = true;
   }
@@ -296,7 +296,7 @@ void onMqttPublish(uint16_t packetId) {
 void addToTxQueue(int typeID, int index) {
       String writePtr(txqWritePtr);
       writePtr = "Write Position: " + writePtr; 
-      mqttClient.publish("rb32/debug", 0, true, writePtr.c_str());
+      //mqttClient.publish("rb32/debug", 0, true, writePtr.c_str());
       txQueue[txqWritePtr].typeId = typeID;
       txQueue[txqWritePtr].index = index; // write the element to the current write position
       txqWritePtr = (txqWritePtr + 1) % TXQUEUE_SIZE; // increment the write pointer and wrap around if necessary
@@ -305,14 +305,14 @@ void addToTxQueue(int typeID, int index) {
 TxQueue* readFromTxQueue() {
   String readPtr(txqReadPtr);
   readPtr = "Read Position: " + readPtr;
-  mqttClient.publish("rb32/debug", 0, true, readPtr.c_str());
+  //mqttClient.publish("rb32/debug", 0, true, readPtr.c_str());
   TxQueue* element = &txQueue[txqReadPtr]; // read the element at the current read position
   txqReadPtr = (txqReadPtr + 1) % TXQUEUE_SIZE; // increment the read pointer and wrap around if necessary
   return element;
 }
 
 bool isTxQueueEmpty() {
-  return txqWritePtr == txqReadPtr;
+  return txqReadPtr == txqWritePtr;
 }
 
 bool isTxQueueFull() {
@@ -438,12 +438,22 @@ void loop() {
   
   int index = readAndBufferImuData();
   if (index != -1){
-    addToTxQueue(0, index);
+    if (isTxQueueFull()){
+      mqttClient.publish("rb32/imu/debug", 0, true, "Warning! TX Queue Full!");
+    }
+    else {
+      addToTxQueue(0, index);
+    }
   }
   
   index = readAndBufferGpsData();
   if (index != -1){
-    addToTxQueue(1,index);
+    if (isTxQueueFull()){
+      mqttClient.publish("rb32/imu/debug", 0, true, "Warning! TX Queue Full!");
+    }
+    else {
+      addToTxQueue(1,index);
+    }
   }
 
   if (WiFi.isConnected() && mqttClient.connected()) {
@@ -554,9 +564,9 @@ void publishImuData(int index) {
 
     sendNextMessage = false;
 
-//    char dbg[64];
-//    snprintf(dbg, sizeof(dbg), "Sent imu msg: %u, imuReadPtr: %u", lastPacketId, txqReadPtr);
-//    mqttClient.publish("rb32/imu/debug", 0, true, dbg);
+    char dbg[64];
+    snprintf(dbg, sizeof(dbg), "Sent imu msg: %u", lastPacketId);
+    //mqttClient.publish("rb32/imu/debug", 0, true, dbg);
   
 }
 
@@ -577,7 +587,7 @@ void publishGpsData(int index) {
 
     char dbg[32];
     snprintf(dbg, sizeof(dbg), "Sent gps msg: %u", lastPacketId);
-    mqttClient.publish("rb32/debug", 0, true, dbg);
+    //mqttClient.publish("rb32/debug", 0, true, dbg);
 }
 
 
