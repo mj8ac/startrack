@@ -1,3 +1,4 @@
+#include <FTPClient.h>
 #include <ESP8266WiFi.h>
 #include <ESPping.h>
 #include <AsyncMqttClient.h>
@@ -25,14 +26,17 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "5.1.0";
+const char* VERSION = "5.1.4";
 
 uint8_t gpsTokenPosition = 0;
 
 uint8_t dHour = 0;
 uint8_t dMin = 0;
 uint8_t dSec = 0;
-uint32_t dImuMsgId;
+uint32_t dImuMsgId = 0;
+uint32_t ftpTransferStartTime = 0;
+uint32_t ftpTransferEndTime = 0;
+size_t lastReadPosition = 0;
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -41,6 +45,8 @@ int  logPosition1 = 0;
 int  logPosition2 = 0;
 int  logCounter1  = 0;
 int  logCounter2  = 0;
+
+int dumpToFlashCount = 0;
 
 int  totalMissedGps = 0;
 int  totalMissedImu = 0;
@@ -73,6 +79,7 @@ String strMsg;
 String sMqttGpsMsg;
 String gpsTime;
 String timeAgeStr;
+String logFileName;
 
 char szDay[3];
 char szMonth[3];
@@ -90,7 +97,8 @@ Ticker mqttReconnectTimer;
 WiFiEventHandler wifiConnectHandler;
 WiFiEventHandler wifiDisconnectHandler;
 Ticker wifiReconnectTimer;
-File f1, f2;
+File f1;
+File f2;
 
 // flush the cached logs
 Ticker flusherCallBack;
@@ -150,7 +158,12 @@ enum FLUSH_STATE {
   UPDATE_FIRMWARE,
   UPDATE_COMPLETE,
   START_UP,
-  FLUSH_COUNTERS
+  FLUSH_COUNTERS,
+  READING_FROM_RAM,
+  READING_FROM_FLASH,
+  FLUSH_TX_QUEUE,
+  UPLOAD_LOG_FILE,
+  CHECK_FTP_STATUS
 };
 
 struct GpsData {
@@ -204,6 +217,10 @@ int imuWritePtr = 0;
 int txqReadPtr = 0;
 int txqWritePtr = 0;
 
+FTPClient ftpClient(LittleFS);
+
+FTPClient::ServerInfo ftpServerInfo("pi", "j9a5cxec", "st01.local", 21);
+
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
 //#define PRINT_DEBUG_MSGS
@@ -242,6 +259,7 @@ void onMqttConnect(bool sessionPresent) {
   printDebug(mac, "Session present: ");
   printDebug(mac, String(sessionPresent));
   uint16_t packetIdSub = mqttClient.subscribe("rb32/debug", 2);
+  mqttClient.subscribe("rb32/upload", 2);
   printDebug(mac, "Subscribing at QoS 2, packetId: ");
 
   String m;
@@ -284,15 +302,46 @@ void onMqttPublish(uint16_t packetId) {
   }
 }
 
-//===========================================================================================================================================
-//void writeToTxQueue(ImuData*  ptrImudata) {
-//  if (ptrImudata){
-//      txQueue[txqWritePtr].typeId = 0;
-//      txQueue[txqWritePtr].data = static_cast<void*>(ptrImudata); // write the element to the current write position
-//      txqWritePtr = (txqWritePtr + 1) % (TXQUEUE_SIZE); // increment the write pointer and wrap around if necessary
-//  }
-//
-//}
+void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
+  if (topic == "rb32/upload")
+  {
+    flushState ==  UPLOAD_LOG_FILE;
+  }
+}
+void dumpDataToFlash() {
+  mqttClient.publish("rb32/imu/debug", 0, true, "Dumping data to flash");
+  if (!f2) {
+    mqttClient.publish("rb32/imu/debug", 0, true, "Warning! Unable to open log file for dumping");
+    return;
+  }
+
+  int elementsToWrite = 0;
+  int elementsWritten = 0;
+
+  if (txqReadPtr < txqWritePtr) {
+    // If no wrap-around, write the data in a single operation
+    elementsToWrite = txqWritePtr - txqReadPtr;
+    f2.write((uint8_t*)&txQueue[txqReadPtr], sizeof(TxQueue) * elementsToWrite);
+    elementsWritten += elementsToWrite;
+  } else {
+    // If wrap-around occurred, write the data in two parts
+    // First, from readIndex to the end of the buffer
+    elementsToWrite = TXQUEUE_SIZE - txqReadPtr;
+    f2.write((uint8_t*)&txQueue[txqReadPtr], sizeof(TxQueue) * elementsToWrite);
+    elementsWritten += elementsToWrite;
+
+    // Next, from the start of the buffer to writeIndex
+    elementsToWrite = txqWritePtr;
+    f2.write((uint8_t*)txQueue, sizeof(TxQueue) * elementsToWrite);
+    elementsWritten += elementsToWrite;
+  }
+
+  // Update readIndex to indicate that all data has been written
+  txqReadPtr = (txqReadPtr + elementsWritten) % TXQUEUE_SIZE;
+  f2.flush();
+  flushState = READING_FROM_FLASH;
+  dumpToFlashCount += 1;
+}
 
 void addToTxQueue(int typeID, const ImuData& imuData) {
   txQueue[txqWritePtr].typeId = typeID;
@@ -316,8 +365,9 @@ bool isTxQueueEmpty() {
 }
 
 bool isTxQueueFull() {
-  if ((txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr){
+  if ((txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr) {
     mqttClient.publish("rb32/imu/debug", 0, true, "Warning! TX Queue Full!");
+    //flushState = FLUSH_TX_QUEUE;
     return true;
   }
   else
@@ -328,58 +378,13 @@ void incrementTxReadPtr() {
   txqReadPtr = (txqReadPtr + 1) % TXQUEUE_SIZE; // increment the read pointer and wrap around if necessary
   totalSent += 1;
 }
-//==========================================================================================================================================
-//int writeToImuBuffer(const ImuData& element) {
-//  imuQueue[imuWritePtr] = element; // write the element to the current write position
-//  int index = imuWritePtr;
-//  imuWritePtr = (imuWritePtr + 1) % IMU_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
-//  return index;
-//}
-//
-//ImuData* readFromImuBuffer() {
-//  ImuData* element = &imuQueue[imuReadPtr]; // read the element at the current read position
-//
-//  return element;
-//}
-//
-//bool isImuBufferEmpty() {
-//  return imuReadPtr == imuWritePtr; // the buffer is empty if the read and write pointers are equal
-//}
-//
-//bool isImuBufferFull() {
-//  return (imuWritePtr + 1) % IMU_BUFFER_SIZE == imuReadPtr; // the buffer is full if the next write position is equal to the read position
-//}
-//
-//void incrementImuReadPtr() {
-//  imuReadPtr = (imuReadPtr + 1) % IMU_BUFFER_SIZE; // increment the read pointer and wrap around if necessary
-//  totalSentImu += 1;
-//}
-//===========================================================================================================================================
-//int writeToGpsBuffer(const GpsData& element) {
-//  gpsQueue[gpsWritePtr] = element; // write the element to the current write position
-//  int index = gpsWritePtr;
-//  gpsWritePtr = (gpsWritePtr + 1) % GPS_BUFFER_SIZE; // increment the write pointer and wrap around if necessary
-//  return index;
-//}
-//
-//GpsData* readFromGpsBuffer() {
-//  GpsData* element = &gpsQueue[gpsReadPtr]; // read the element at the current read position
-//  return element;
-//}
-//
-//bool isGpsBufferEmpty() {
-//  return gpsReadPtr == gpsWritePtr; // the buffer is empty if the read and write pointers are equal
-//}
-//
-//bool isGpsBufferFull() {
-//  return (gpsWritePtr + 1) % GPS_BUFFER_SIZE == gpsReadPtr; // the buffer is full if the next write position is equal to the read position
-//}
-//
-//void incrementGpsReadPtr() {
-//  gpsReadPtr = (gpsReadPtr + 1) % GPS_BUFFER_SIZE; // increment the read pointer and wrap around if necessary
-//  totalSentGps += 1;
-//}
-//===========================================================================================================================================
+
+String createLogFileName() {
+  char dateBuffer[34];
+  sprintf(dateBuffer, "%s_%04d-%02d-%02d.bin", mac.c_str(), year(), month(), day());
+  return String(dateBuffer);
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.swap();
@@ -404,33 +409,22 @@ void setup() {
   mac = WiFi.macAddress();
 
   if (LittleFS.begin()) {
-
-    if (LittleFS.format()) {
-      //Serial.println("Formatted filesystem");
-    }
-    else {
-      //Serial.println("Failed to format filesystem");
-      f1 = LittleFS.open("/flushFile1.bin", "w");
-      f2 = LittleFS.open("/flushFile2.bin", "w");
-      if (!f1 || !f2) {
-        //Serial.println("Failed to create flush both file!");
-      }
-      else {
-        f1.setTimeout(100);
-        f2.setTimeout(100);
-      }
-
-      //fRead = LittleFS.open("/dropped.txt", "r");
-    }
-
     // Add optional callback notifiers
     ESPhttpUpdate.onEnd(update_finished);
-
+    LittleFS.remove("/data.bin");
+    logFileName = createLogFileName();
+    logFileName.trim();
+    f2 = LittleFS.open(logFileName, "w");
     t1LED = 0;
     t2LED = 0;
     t1FLUSH = 0;
     t2FLUSH = 0;
   }
+  else {
+    mqttClient.publish("rb32/debug", 0, true, "Warning! Unable to mount filesystem");
+  }
+
+  ftpClient.begin(ftpServerInfo);
 }
 
 void loop() {
@@ -443,23 +437,59 @@ void loop() {
         updateFailed = true;
         flushCountersCallBack.attach(2, setFlushState);
         flushState = UPDATE_COMPLETE;
-        //sendNextMessage = true;
       }
+      break;
+    case UPDATE_COMPLETE:
+      flushState = DONT_FLUSH;
       break;
     case FLUSH_COUNTERS:
       flushCounters();
+      break;
+    case READING_FROM_RAM:
+      if (WiFi.isConnected() && mqttClient.connected()) {
+        publishFromTxQueue();
+      }
+      break;
+    case FLUSH_TX_QUEUE:
+      dumpDataToFlash();
+      break;
+    case UPLOAD_LOG_FILE:
+    {
+      f2.close();
+      ftpTransferStartTime = millis();
+      String dstPath;
+      dstPath = "home/pi/ftp/" + logFileName;
+      ftpClient.transfer(logFileName, dstPath, FTPClient::FTP_PUT_NONBLOCKING);
+      flushState = CHECK_FTP_STATUS;
+    }
+      break;
+    case CHECK_FTP_STATUS:
+      {
+        const FTPClient::Status &r = ftpClient.check();
+        if (r.result == FTPClient::OK)
+        {
+          ftpTransferEndTime = millis();
+          String m = mac + ", Upload completed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
+          mqttClient.publish("rb32/status", 0, true, m.c_str());
+          flushState = READING_FROM_RAM;
+          f2 = LittleFS.open(logFileName, "w");
+        }
+        else if (r.result == FTPClient::ERROR)
+        {
+          ftpTransferEndTime = millis();
+          String m = mac + ", Upload failed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
+          mqttClient.publish("rb32/status", 0, true, m.c_str());
+          flushState = READING_FROM_RAM;
+          f2 = LittleFS.open(logFileName, "w");
+        }
+      }
+      break;
     default:
       break;
   }
 
   readAndBufferImuData();
   readAndBufferGpsData();
-    
-  if (WiFi.isConnected() && mqttClient.connected()) {
-    //publishGpsData();
-    //publishImuData();
-    publishFromTxQueue();
-  }
 
   t2LED = millis();
   if ((t2LED - t1LED) >= 1000) {
@@ -471,6 +501,7 @@ void loop() {
       ledState = LOW;
     }
 
+    ftpClient.handleFTP();
     digitalWrite(LED_BUILTIN, ledState);
     t1LED = t2LED;
   }
@@ -486,6 +517,18 @@ void publishFromTxQueue() {
       publishGpsData(tmpTxqData->data.gps);
     }
   }
+}
+
+void publishFromFlash(TxQueue& element) {
+  //  if (sendNextMessage == true) {
+
+  if (element.typeId == 0) {
+    publishImuData(element.data.imu);
+  }
+  else if (element.typeId == 1) {
+    publishGpsData(element.data.gps);
+  }
+  //  }
 }
 
 
@@ -514,7 +557,10 @@ void readAndBufferImuData() {
     imu.ms = timeAge;
     imu.msgId = imuMsgId;
 
-    if (isTxQueueFull()) {
+    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) > 700) {
+      flushState = FLUSH_TX_QUEUE;
+    }
+    else if (isTxQueueFull()) {
       totalMissedImu += 1;
     }
     else {
@@ -725,8 +771,6 @@ void flushCounters()
   char buff[256];
 
   txBufferSize  = calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE);
-  //gpsBufferSize = calculateBufferSize(gpsWritePtr, gpsReadPtr, GPS_BUFFER_SIZE);
-  //imuBufferSize = calculateBufferSize(imuWritePtr, imuReadPtr, IMU_BUFFER_SIZE);
 
   snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d, txqWritePtr: %u, txqReadPtr: %u, gpsWritePtr: %u, gpsReadPtr: %u, imuWritePtr: %u, imuReadPtr: %u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr, gpsWritePtr, gpsReadPtr, imuWritePtr, imuReadPtr);
   mqttClient.publish("rb32/counters", 0, true, buff);
