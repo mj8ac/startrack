@@ -440,7 +440,7 @@ void loop() {
       }
       break;
     case UPDATE_COMPLETE:
-      flushState = DONT_FLUSH;
+      flushState = READING_FROM_RAM;
       break;
     case FLUSH_COUNTERS:
       flushCounters();
@@ -458,7 +458,7 @@ void loop() {
       f2.close();
       ftpTransferStartTime = millis();
       String dstPath;
-      dstPath = "home/pi/ftp/" + logFileName;
+      dstPath = "/home/pi/ftp/" + logFileName;
       ftpClient.transfer(logFileName, dstPath, FTPClient::FTP_PUT_NONBLOCKING);
       flushState = CHECK_FTP_STATUS;
     }
