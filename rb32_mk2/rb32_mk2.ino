@@ -99,6 +99,7 @@ WiFiEventHandler wifiDisconnectHandler;
 Ticker wifiReconnectTimer;
 File f1;
 File f2;
+File fu;
 
 // flush the cached logs
 Ticker flusherCallBack;
@@ -163,7 +164,8 @@ enum FLUSH_STATE {
   READING_FROM_FLASH,
   FLUSH_TX_QUEUE,
   UPLOAD_LOG_FILE,
-  CHECK_FTP_STATUS
+  CHECK_FTP_STATUS,
+  TEST_FTP
 };
 
 struct GpsData {
@@ -217,9 +219,11 @@ int imuWritePtr = 0;
 int txqReadPtr = 0;
 int txqWritePtr = 0;
 
+int testCount = 0;
+
 FTPClient ftpClient(LittleFS);
 
-FTPClient::ServerInfo ftpServerInfo("pi", "j9a5cxec", "st01.local", 21);
+FTPClient::ServerInfo ftpServerInfo("pi", "J9a5cxec", "st01.local", 21);
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
@@ -413,8 +417,12 @@ void setup() {
     ESPhttpUpdate.onEnd(update_finished);
     LittleFS.remove("/data.bin");
     logFileName = createLogFileName();
-    logFileName.trim();
+    //logFileName.trim();
+    mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
     f2 = LittleFS.open(logFileName, "w");
+    
+    fu = LittleFS.open("/fpt_test.txt", "w");
+    
     t1LED = 0;
     t2LED = 0;
     t1FLUSH = 0;
@@ -440,7 +448,7 @@ void loop() {
       }
       break;
     case UPDATE_COMPLETE:
-      flushState = READING_FROM_RAM;
+      flushState = TEST_FTP;
       break;
     case FLUSH_COUNTERS:
       flushCounters();
@@ -458,10 +466,16 @@ void loop() {
       f2.close();
       ftpTransferStartTime = millis();
       String dstPath;
-      dstPath = "/home/pi/ftp/" + logFileName;
+      dstPath = "/home/pi/ftp/files" + logFileName;
       ftpClient.transfer(logFileName, dstPath, FTPClient::FTP_PUT_NONBLOCKING);
       flushState = CHECK_FTP_STATUS;
     }
+      break;
+    case TEST_FTP:
+      fu.write("hello world!");
+      fu.close();
+      ftpClient.transfer("/fpt_test.txt", "files/ftp_test.txt", FTPClient::FTP_PUT_NONBLOCKING);
+      flushState = CHECK_FTP_STATUS;
       break;
     case CHECK_FTP_STATUS:
       {
