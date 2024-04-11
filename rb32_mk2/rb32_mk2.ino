@@ -385,7 +385,7 @@ void incrementTxReadPtr() {
 
 String createLogFileName() {
   char dateBuffer[34];
-  sprintf(dateBuffer, "%s_%04d-%02d-%02d.bin", mac.c_str(), year(), month(), day());
+  sprintf(dateBuffer, "/%s_%04d-%02d-%02d.bin", mac.c_str(), year(), month(), day());
   return String(dateBuffer);
 }
 
@@ -418,10 +418,12 @@ void setup() {
     LittleFS.remove("/data.bin");
     logFileName = createLogFileName();
     //logFileName.trim();
+    mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
     mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
-    f2 = LittleFS.open(logFileName, "w");
-    
-    fu = LittleFS.open("/fpt_test.txt", "w");
+    //f2 = LittleFS.open(logFileName, "w");
+
+    logFileName.replace(":", "");
+    fu = LittleFS.open(logFileName, "w");
     
     t1LED = 0;
     t2LED = 0;
@@ -472,9 +474,11 @@ void loop() {
     }
       break;
     case TEST_FTP:
+      mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
+      mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
       fu.write("hello world!");
       fu.close();
-      ftpClient.transfer("/fpt_test.txt", "files/ftp_test.txt", FTPClient::FTP_PUT_NONBLOCKING);
+      ftpClient.transfer(logFileName, "files/ftp_test.txt", FTPClient::FTP_PUT_NONBLOCKING);
       flushState = CHECK_FTP_STATUS;
       break;
     case CHECK_FTP_STATUS:
