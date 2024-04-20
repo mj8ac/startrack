@@ -304,15 +304,19 @@ void onMqttUnsubscribe(uint16_t packetId) {
 
 void onMqttPublish(uint16_t packetId) {
   sendNextMessage = true;
-  if (flushState != READING_FROM_FLASH && flushState != CHECK_FLASH_FLUSH_STATUS)
-  {
-    incrementTxReadPtr();
-  }
   if (lastMessageType == 0) {
     totalSentImu += 1;
   }
   else if (lastMessageType == 1) {
     totalSentGps += 1;
+  }
+  if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS || flushState == FLUSH_TX_QUEUE || flushState == FLUSH_COUNTERS)
+  {
+    return;
+  }
+  else
+  {
+    incrementTxReadPtr();
   }
 }
 
@@ -328,6 +332,11 @@ void dumpDataToFlash() {
     mqttClient.publish("rb32/imu/debug", 0, true, "Warning! Unable to open log file for dumping");
     return;
   }
+
+  String rdPtr(txqReadPtr);
+  String wrPtr(txqWritePtr);
+  String t = "TxQ Write Ptr: " + wrPtr + ", TxQ Read Ptr: " + rdPtr;
+  mqttClient.publish("rb32/imu/debug", 0, true, t.c_str());
 
   int elementsToWrite = 0;
   int elementsWritten = 0;
@@ -357,7 +366,7 @@ void dumpDataToFlash() {
   String sz = "Size of TxQueue: " + sizeofTxQ + ", Elements to write: " + el2Write;
   mqttClient.publish("rb32/imu/debug", 0, true, sz.c_str());
   // Update readIndex to indicate that all data has been written
-  txqReadPtr = ((txqReadPtr + elementsWritten) % TXQUEUE_SIZE)-1;
+  txqReadPtr = ((txqReadPtr + elementsWritten) % TXQUEUE_SIZE);
   f2.flush();
   flushState = READING_FROM_FLASH;
   dumpToFlashCount += 1;
@@ -554,7 +563,7 @@ void loop() {
   String fsm = "Flush State: " + fstate;
   //mqttClient.publish("rb32/status", 0, true, fsm.c_str());
 
-  if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE)
+  if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE && flushState != FLUSH_COUNTERS)
   {
     readAndBufferImuData();
     //readAndBufferGpsData();
@@ -590,7 +599,7 @@ void publishFromTxQueue() {
 
 TransferState publishFromFlash() {
   TxQueue t;
-  int bytesRead=0;
+  int bytesRead = 0;
   if (sendNextMessage == true)
   {
     if (f2.available())
@@ -604,13 +613,12 @@ TransferState publishFromFlash() {
         publishImuData(t.data.imu);
       }
       else if (t.typeId == 1) {
-        f2.read((uint8_t *)&t.data.gps, sizeof(GpsData)+1);
+        f2.read((uint8_t *)&t.data.gps, sizeof(GpsData) + 1);
         publishGpsData(t.data.gps);
       }
-      String bRead(bytesRead);
-      String msg = "Bytes read: " + bRead;
-      mqttClient.publish("rb32/status", 0, true, msg.c_str());
-      mqttClient.publish("rb32/status", 0, true, "TransferState::IN_PROGRESS");
+      //      String bRead(bytesRead);
+      //      String msg = "Bytes read: " + bRead;
+      //      mqttClient.publish("rb32/status", 0, true, msg.c_str());
       return TransferState::IN_PROGRESS;
     }
     else
@@ -618,7 +626,7 @@ TransferState publishFromFlash() {
   }
   else
   {
-     return TransferState::WAITING; 
+    return TransferState::WAITING;
   }
 }
 
@@ -648,14 +656,16 @@ void readAndBufferImuData() {
     imu.ms = timeAge;
     imu.msgId = imuMsgId;
 
-    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 700) {
-      flushState = FLUSH_TX_QUEUE;
-    }
-    else if (isTxQueueFull()) {
+
+    if (isTxQueueFull()) {
       totalMissedImu += 1;
     }
     else {
       addToTxQueue(0, imu);
+    }
+
+    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 700) {
+      flushState = FLUSH_TX_QUEUE;
     }
 
     imuMsgId += 1;
