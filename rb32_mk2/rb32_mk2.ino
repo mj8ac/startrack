@@ -36,7 +36,7 @@ uint8_t dSec = 0;
 uint32_t dImuMsgId = 0;
 uint32_t ftpTransferStartTime = 0;
 uint32_t ftpTransferEndTime = 0;
-size_t lastReadPosition = 0;
+unsigned int lastReadPosition = 0;
 
 int  ecg          = 0;
 int  rssi         = 0;
@@ -492,6 +492,7 @@ void loop() {
         ftpTransferStartTime = millis();
         f2.close();
         f2 = LittleFS.open(logFileName, "r");
+        f2.seek(lastReadPosition);
         if (publishFromFlash() == TransferState::IN_PROGRESS)
         {
           flushState = CHECK_FLASH_FLUSH_STATUS;
@@ -504,64 +505,18 @@ void loop() {
         ftpTransferEndTime = millis();
         String m = mac + ", Upload failed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
         mqttClient.publish("rb32/status", 0, true, m.c_str());
+        lastReadPosition = f2.position();
         f2.close();
-        f2 = LittleFS.open(logFileName, "w");
+        f2 = LittleFS.open(logFileName, "a");
         flushState = DONT_FLUSH;
       }
       break;
     case FLUSH_TX_QUEUE:
       dumpDataToFlash();
       break;
-    case UPLOAD_LOG_FILE:
-      {
-        f2.close();
-        ftpTransferStartTime = millis();
-        String dstPath;
-        dstPath = "files/" + logFileName;
-        ftpClient.transfer(logFileName, dstPath.c_str(), FTPClient::FTP_PUT_NONBLOCKING);
-        flushState = CHECK_FTP_STATUS;
-      }
-      break;
-    case TEST_FTP:
-      {
-        mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
-        mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
-        fu.write("hello world!");
-        fu.close();
-        String dstPath;
-        dstPath = "files/" + logFileName;
-        ftpClient.transfer(logFileName, dstPath.c_str(), FTPClient::FTP_PUT_NONBLOCKING);
-        flushState = CHECK_FTP_STATUS;
-      }
-      break;
-    case CHECK_FTP_STATUS:
-      {
-        const FTPClient::Status &r = ftpClient.check();
-        if (r.result == FTPClient::OK)
-        {
-          ftpTransferEndTime = millis();
-          String m = mac + ", Upload completed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
-          mqttClient.publish("rb32/status", 0, true, m.c_str());
-          flushState = READING_FROM_RAM;
-          f2 = LittleFS.open(logFileName, "w");
-        }
-        else if (r.result == FTPClient::ERROR)
-        {
-          ftpTransferEndTime = millis();
-          String m = mac + ", Upload failed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
-          mqttClient.publish("rb32/status", 0, true, m.c_str());
-          flushState = READING_FROM_RAM;
-          f2 = LittleFS.open(logFileName, "w");
-        }
-      }
-      break;
     default:
       break;
   }
-
-  String fstate(flushState);
-  String fsm = "Flush State: " + fstate;
-  //mqttClient.publish("rb32/status", 0, true, fsm.c_str());
 
   if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE && flushState != FLUSH_COUNTERS)
   {
@@ -616,9 +571,6 @@ TransferState publishFromFlash() {
         f2.read((uint8_t *)&t.data.gps, sizeof(GpsData) + 1);
         publishGpsData(t.data.gps);
       }
-      //      String bRead(bytesRead);
-      //      String msg = "Bytes read: " + bRead;
-      //      mqttClient.publish("rb32/status", 0, true, msg.c_str());
       return TransferState::IN_PROGRESS;
     }
     else
@@ -664,7 +616,7 @@ void readAndBufferImuData() {
       addToTxQueue(0, imu);
     }
 
-    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 700) {
+    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 1398) {
       flushState = FLUSH_TX_QUEUE;
     }
 
