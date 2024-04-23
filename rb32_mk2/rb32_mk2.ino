@@ -270,7 +270,7 @@ void onMqttConnect(bool sessionPresent) {
   printDebug(mac, "Session present: ");
   printDebug(mac, String(sessionPresent));
   uint16_t packetIdSub = mqttClient.subscribe("rb32/debug", 2);
-  mqttClient.subscribe("rb32/upload", 2);
+  mqttClient.subscribe("rb32/upload", 0);
   printDebug(mac, "Subscribing at QoS 2, packetId: ");
 
   String m;
@@ -321,9 +321,9 @@ void onMqttPublish(uint16_t packetId) {
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  if (topic == "rb32/upload")
+  if (strcmp(topic, "rb32/upload") ==0)
   {
-    flushState ==  UPLOAD_LOG_FILE;
+    flushState =  READING_FROM_FLASH;
   }
 }
 void dumpDataToFlash() {
@@ -368,7 +368,7 @@ void dumpDataToFlash() {
   // Update readIndex to indicate that all data has been written
   txqReadPtr = ((txqReadPtr + elementsWritten) % TXQUEUE_SIZE);
   f2.flush();
-  flushState = READING_FROM_FLASH;
+  flushState = DONT_FLUSH;
   dumpToFlashCount += 1;
 }
 
@@ -433,6 +433,7 @@ void setup() {
   mqttClient.onSubscribe(onMqttSubscribe);
   mqttClient.onUnsubscribe(onMqttUnsubscribe);
   mqttClient.onPublish(onMqttPublish);
+  mqttClient.onMessage(onMqttMessage);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 
   connectToWifi();
@@ -493,9 +494,14 @@ void loop() {
         f2.close();
         f2 = LittleFS.open(logFileName, "r");
         f2.seek(lastReadPosition);
-        if (publishFromFlash() == TransferState::IN_PROGRESS)
+        TransferState t = publishFromFlash();
+        if (t == TransferState::IN_PROGRESS)
         {
           flushState = CHECK_FLASH_FLUSH_STATUS;
+        }
+        if (t == TransferState::COMPLETE)
+        {
+          flushState = DONT_FLUSH;
         }
       }
       break;
@@ -810,7 +816,7 @@ void update_finished() {
   m = mac + "," + VERSION + ',' + "update complete";
   pubCode = mqttClient.publish("rb32/data/fail", 0, true, m.c_str());
   //flusherCallBack.attach(5, initiateFlush);
-  flushCountersCallBack.attach(2, setFlushState);
+  flushCountersCallBack.attach(5, setFlushState);
 }
 
 void setFlushState()
