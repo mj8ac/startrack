@@ -321,7 +321,7 @@ void onMqttPublish(uint16_t packetId) {
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
-  if (strcmp(topic, "rb32/upload") ==0)
+  if (strcmp(topic, "rb32/upload") == 0)
   {
     flushState =  READING_FROM_FLASH;
   }
@@ -526,8 +526,8 @@ void loop() {
 
   if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE && flushState != FLUSH_COUNTERS)
   {
-    readAndBufferImuData();
-    //readAndBufferGpsData();
+    //readAndBufferImuData();
+    readAndBufferGpsData();
   }
 
   t2LED = millis();
@@ -574,7 +574,7 @@ TransferState publishFromFlash() {
         publishImuData(t.data.imu);
       }
       else if (t.typeId == 1) {
-        f2.read((uint8_t *)&t.data.gps, sizeof(GpsData) + 1);
+        f2.read((uint8_t *)&t.data.gps, sizeof(GpsData));
         publishGpsData(t.data.gps);
       }
       return TransferState::IN_PROGRESS;
@@ -734,6 +734,10 @@ void readAndBufferGpsData() {
         }
 
         gpsMsgId += 1;
+        
+        if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 20) {
+          flushState = FLUSH_TX_QUEUE;
+        }
       }
 
       //parse out the time so we can set the wemos clock
