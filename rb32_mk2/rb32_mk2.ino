@@ -396,7 +396,6 @@ bool isTxQueueEmpty() {
 bool isTxQueueFull() {
   if ((txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr) {
     mqttClient.publish("rb32/imu/debug", 0, true, "Warning! TX Queue Full!");
-    //flushState = FLUSH_TX_QUEUE;
     return true;
   }
   else
@@ -477,7 +476,7 @@ void loop() {
       }
       break;
     case UPDATE_COMPLETE:
-      flushState = DONT_FLUSH;
+      flushState = READING_FROM_RAM;
       break;
     case FLUSH_COUNTERS:
       flushCounters();
@@ -526,8 +525,12 @@ void loop() {
 
   if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE && flushState != FLUSH_COUNTERS)
   {
-    //readAndBufferImuData();
+    readAndBufferImuData();
     readAndBufferGpsData();
+  }
+
+  if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) >= 1396) {
+    flushState = FLUSH_TX_QUEUE;
   }
 
   t2LED = millis();
@@ -540,7 +543,6 @@ void loop() {
       ledState = LOW;
     }
 
-    ftpClient.handleFTP();
     digitalWrite(LED_BUILTIN, ledState);
     t1LED = t2LED;
   }
@@ -559,6 +561,7 @@ void publishFromTxQueue() {
 }
 
 TransferState publishFromFlash() {
+
   TxQueue t;
   int bytesRead = 0;
   if (sendNextMessage == true)
@@ -622,10 +625,6 @@ void readAndBufferImuData() {
       addToTxQueue(0, imu);
     }
 
-    if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 1398) {
-      flushState = FLUSH_TX_QUEUE;
-    }
-
     imuMsgId += 1;
     imuT0 = imuT1;
   }
@@ -671,10 +670,8 @@ void publishGpsData(GpsData& data) {
     lastPacketId = rc;
     lastMessageType = 1;
   }
-
   sendNextMessage = false;
 }
-
 
 void readAndBufferGpsData() {
   while (Serial.available() > 0) {
@@ -734,10 +731,7 @@ void readAndBufferGpsData() {
         }
 
         gpsMsgId += 1;
-        
-        if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 20) {
-          flushState = FLUSH_TX_QUEUE;
-        }
+
       }
 
       //parse out the time so we can set the wemos clock
@@ -835,7 +829,8 @@ void flushCounters()
 
   txBufferSize  = calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE);
 
-  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d, txqWritePtr: %u, txqReadPtr: %u, gpsWritePtr: %u, gpsReadPtr: %u, imuWritePtr: %u, imuReadPtr: %u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr, gpsWritePtr, gpsReadPtr, imuWritePtr, imuReadPtr);
+  // MAC ID, missed IMU, sent IMU, missed GPS, sent GPS, buffer size, total sent, txq Write ptr, txq Read ptr
+  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%u,%u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr);
   mqttClient.publish("rb32/counters", 0, true, buff);
   flushState = prevFlushState;
 }
