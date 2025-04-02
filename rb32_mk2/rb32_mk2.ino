@@ -26,7 +26,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "5.1.4";
+const char* VERSION = "5.1.5";
 
 uint8_t gpsTokenPosition = 0;
 
@@ -41,10 +41,6 @@ unsigned int lastReadPosition = 0;
 int  ecg          = 0;
 int  rssi         = 0;
 int  pubCode      = 0;
-int  logPosition1 = 0;
-int  logPosition2 = 0;
-int  logCounter1  = 0;
-int  logCounter2  = 0;
 
 int dumpToFlashCount = 0;
 
@@ -58,6 +54,7 @@ int  totalSentImu   = 0;
 int  totalSent = 0;
 int  fromCache = 0;
 int  updateFailCount = 0;
+unsigned int  logsInFlash = 0;
 long lastBlink      = 0;
 
 long timeNow    = 0;
@@ -142,13 +139,8 @@ uint8_t lastMessageType = -1;
 unsigned int t1LED, t2LED, t1FLUSH, t2FLUSH;
 int ledState = LOW;
 
-bool flushingFile1        = false;
-bool flushingFile2        = false;
-bool writeIntoFlushFile1  = true;
 bool updateFailed = true;
-bool firstTransmit = true;
 bool sendNextMessage = true;
-bool sendNextImuMessage = true;
 
 enum FLUSH_STATE {
   FLUSH_FILE_1,
@@ -310,6 +302,12 @@ void onMqttPublish(uint16_t packetId) {
   else if (lastMessageType == 1) {
     totalSentGps += 1;
   }
+
+  if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS)
+  {
+    logsInFlash -=1;
+  }
+  
   if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS || flushState == FLUSH_TX_QUEUE || flushState == FLUSH_COUNTERS)
   {
     return;
@@ -370,6 +368,7 @@ void dumpDataToFlash() {
   f2.flush();
   flushState = DONT_FLUSH;
   dumpToFlashCount += 1;
+  logsInFlash += elementsWritten;
 }
 
 void addToTxQueue(int typeID, const ImuData& imuData) {
@@ -829,8 +828,8 @@ void flushCounters()
 
   txBufferSize  = calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE);
 
-  // MAC ID, missed IMU, sent IMU, missed GPS, sent GPS, buffer size, total sent, txq Write ptr, txq Read ptr
-  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%u,%u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr);
+  // MAC ID, missed IMU, sent IMU, missed GPS, sent GPS, buffer size, total sent, txq Write ptr, txq Read ptr, logs in flash
+  snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%u,%u, %u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr, logsInFlash);
   mqttClient.publish("rb32/counters", 0, true, buff);
   flushState = prevFlushState;
 }
