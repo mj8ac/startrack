@@ -26,7 +26,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "5.1.5";
+const char* VERSION = "5.1.6";
 
 uint8_t gpsTokenPosition = 0;
 
@@ -263,6 +263,7 @@ void onMqttConnect(bool sessionPresent) {
   printDebug(mac, String(sessionPresent));
   uint16_t packetIdSub = mqttClient.subscribe("rb32/debug", 2);
   mqttClient.subscribe("rb32/upload", 0);
+  mqttClient.subscribe("rb32/delete/files", 0);
   printDebug(mac, "Subscribing at QoS 2, packetId: ");
 
   String m;
@@ -305,9 +306,9 @@ void onMqttPublish(uint16_t packetId) {
 
   if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS)
   {
-    logsInFlash -=1;
+    logsInFlash -= 1;
   }
-  
+
   if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS || flushState == FLUSH_TX_QUEUE || flushState == FLUSH_COUNTERS)
   {
     return;
@@ -414,6 +415,14 @@ String createLogFileName() {
   return s;
 }
 
+void deleteAllFiles() {
+  Dir dir = LittleFS.openDir("/");  // Open the root directory
+  while (dir.next()) {
+    String fileName = dir.fileName();
+    LittleFS.remove(fileName);  // Delete each file
+  }
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.swap();
@@ -441,6 +450,7 @@ void setup() {
   if (LittleFS.begin()) {
     // Add optional callback notifiers
     ESPhttpUpdate.onEnd(update_finished);
+    deleteAllFiles();
 
     mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
     mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
