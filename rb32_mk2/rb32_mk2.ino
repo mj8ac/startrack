@@ -26,7 +26,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "5.1.6";
+const char* VERSION = "5.1.7";
 
 uint8_t gpsTokenPosition = 0;
 
@@ -238,18 +238,21 @@ void printDebug(String mac, String msg) {
 
 void connectToWifi() {
   printDebug(mac, "Connecting to Wi-Fi...");
+  WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setAutoReconnect(false);
 }
 
 void onWifiConnect(const WiFiEventStationModeGotIP& event) {
   printDebug(mac, "Connected to Wi-Fi.");
   connectToMqtt();
+  wifiReconnectTimer.detach();
 }
 
 void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
   printDebug(mac, "Disconnected from Wi-Fi.");
   mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
-  wifiReconnectTimer.once(2, connectToWifi);
+  wifiReconnectTimer.attach(5, connectToWifi);
 }
 
 void connectToMqtt() {
@@ -306,7 +309,7 @@ void onMqttPublish(uint16_t packetId) {
 
   if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS)
   {
-    logsInFlash -= 1;
+    if (logsInFlash > 0) logsInFlash--;
   }
 
   if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS || flushState == FLUSH_TX_QUEUE || flushState == FLUSH_COUNTERS)
@@ -509,7 +512,7 @@ void loop() {
         }
         if (t == TransferState::COMPLETE)
         {
-          flushState = DONT_FLUSH;
+          flushState = READING_FROM_RAM;
         }
       }
       break;
@@ -522,7 +525,7 @@ void loop() {
         lastReadPosition = f2.position();
         f2.close();
         f2 = LittleFS.open(logFileName, "a");
-        flushState = DONT_FLUSH;
+        flushState = READING_FROM_RAM;
       }
       break;
     case FLUSH_TX_QUEUE:
