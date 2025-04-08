@@ -1,4 +1,3 @@
-#include <FTPClient.h>
 #include <ESP8266WiFi.h>
 #include <ESPping.h>
 #include <AsyncMqttClient.h>
@@ -34,8 +33,8 @@ uint8_t dHour = 0;
 uint8_t dMin = 0;
 uint8_t dSec = 0;
 uint32_t dImuMsgId = 0;
-uint32_t ftpTransferStartTime = 0;
-uint32_t ftpTransferEndTime = 0;
+uint32_t dataSyncStartTime = 0;
+uint32_t dataSyncEndTime = 0;
 unsigned int lastReadPosition = 0;
 
 int  ecg          = 0;
@@ -220,9 +219,6 @@ int txqWritePtr = 0;
 
 int testCount = 0;
 
-FTPClient ftpClient(LittleFS);
-
-FTPClient::ServerInfo ftpServerInfo("pi", "J9a5cxec", "st01.local", 21);
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
@@ -329,9 +325,11 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
   }
 }
 void dumpDataToFlash() {
-  mqttClient.publish("rb32/imu/debug", 0, true, "Dumping data to flash");
+  String m = mac + ", dumping data to flash";
+  mqttClient.publish("rb32/imu/debug", 0, true, m.c_str());
   if (!f2) {
-    mqttClient.publish("rb32/imu/debug", 0, true, "Warning! Unable to open log file for dumping");
+    m = mac + ", warning! Unable to open log file for dumping";
+    mqttClient.publish("rb32/imu/debug", 0, true, m.c_str());
     return;
   }
 
@@ -471,8 +469,6 @@ void setup() {
   else {
     mqttClient.publish("rb32/debug", 0, true, "Warning! Unable to mount filesystem");
   }
-
-  ftpClient.begin(ftpServerInfo);
 }
 
 void loop() {
@@ -500,8 +496,9 @@ void loop() {
       break;
     case READING_FROM_FLASH:
       if (WiFi.isConnected() && mqttClient.connected()) {
-        mqttClient.publish("rb32/status", 0, true, "Reading from flash");
-        ftpTransferStartTime = millis();
+        String m = mac + ", reading from flash";
+        mqttClient.publish("rb32/status", 0, true, m.c_str());
+        dataSyncStartTime = millis();
         f2.close();
         f2 = LittleFS.open(logFileName, "r");
         f2.seek(lastReadPosition);
@@ -519,8 +516,8 @@ void loop() {
     case CHECK_FLASH_FLUSH_STATUS:
       if (publishFromFlash() == TransferState::COMPLETE)
       {
-        ftpTransferEndTime = millis();
-        String m = mac + ", Upload failed after " + String(ftpTransferEndTime - ftpTransferStartTime) + "ms";
+        dataSyncEndTime = millis();
+        String m = mac + ", data sync time " + String(dataSyncEndTime - dataSyncStartTime) + "ms";
         mqttClient.publish("rb32/status", 0, true, m.c_str());
         lastReadPosition = f2.position();
         f2.close();
