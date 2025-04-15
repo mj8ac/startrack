@@ -140,12 +140,10 @@ int ledState = LOW;
 
 bool updateFailed = true;
 bool sendNextMessage = true;
+bool pauseLogging = false;
+bool lastMessageFromFlash = false;
 
 enum FLUSH_STATE {
-  FLUSH_FILE_1,
-  FLUSH_FILE_2,
-  RESET_FILES,
-  TOGGLE_FLUSH_FLAGS,
   DONT_FLUSH,
   UPDATE_FIRMWARE,
   UPDATE_COMPLETE,
@@ -154,16 +152,20 @@ enum FLUSH_STATE {
   READING_FROM_RAM,
   READING_FROM_FLASH,
   FLUSH_TX_QUEUE,
-  UPLOAD_LOG_FILE,
-  CHECK_FTP_STATUS,
-  TEST_FTP,
-  CHECK_FLASH_FLUSH_STATUS
+  CHECK_FLASH_FLUSH_STATUS,
+  DUMP_FLASH
 };
 
 enum class TransferState {
   IN_PROGRESS,
   COMPLETE,
   WAITING
+};
+
+enum FILE_ACCESS_MODE {
+  FILE_UNOPENED,
+  FILE_APPEND,
+  FILE_READ
 };
 
 struct GpsData {
@@ -218,10 +220,11 @@ int txqReadPtr = 0;
 int txqWritePtr = 0;
 
 int testCount = 0;
-
+int prevFlushStateForLog = -1;  // -1 ensures the first state always logs
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
+FILE_ACCESS_MODE f2Mode = FILE_UNOPENED;
 //#define PRINT_DEBUG_MSGS
 
 void printDebug(String mac, String msg) {
@@ -303,27 +306,25 @@ void onMqttPublish(uint16_t packetId) {
     totalSentGps += 1;
   }
 
-  if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS)
+  if (lastMessageFromFlash && logsInFlash > 0)
   {
-    if (logsInFlash > 0) logsInFlash--;
-  }
-
-  if (flushState == READING_FROM_FLASH || flushState == CHECK_FLASH_FLUSH_STATUS || flushState == FLUSH_TX_QUEUE || flushState == FLUSH_COUNTERS)
-  {
-    return;
+    logsInFlash--;
   }
   else
   {
     incrementTxReadPtr();
   }
+  lastMessageFromFlash = false;
 }
 
 void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total) {
   if (strcmp(topic, "rb32/upload") == 0)
   {
-    flushState =  READING_FROM_FLASH;
+    flushState =  DUMP_FLASH;
+    pauseLogging = true;
   }
 }
+
 void dumpDataToFlash() {
   String m = mac + ", dumping data to flash";
   mqttClient.publish("rb32/imu/debug", 0, true, m.c_str());
@@ -368,7 +369,7 @@ void dumpDataToFlash() {
   // Update readIndex to indicate that all data has been written
   txqReadPtr = ((txqReadPtr + elementsWritten) % TXQUEUE_SIZE);
   f2.flush();
-  flushState = DONT_FLUSH;
+  flushState = READING_FROM_RAM;
   dumpToFlashCount += 1;
   logsInFlash += elementsWritten;
 }
@@ -416,12 +417,28 @@ String createLogFileName() {
   return s;
 }
 
-void deleteAllFiles() {
+// delete files
+void deleteOldFiles() {
   Dir dir = LittleFS.openDir("/");  // Open the root directory
   while (dir.next()) {
     String fileName = dir.fileName();
-    LittleFS.remove(fileName);  // Delete each file
+    //    if (fileName != logFileName) { // don't delete today's file in case the esp reboots during a game
+    LittleFS.remove(fileName);
+    //    }
   }
+}
+
+void openFlashFileForAppend() {
+  if (f2) f2.close();
+  f2 = LittleFS.open(logFileName, "a");
+  f2Mode = FILE_APPEND;
+}
+
+void openFlashFileForRead() {
+  if (f2) f2.close();
+  f2 = LittleFS.open(logFileName, "r");
+  f2.seek(lastReadPosition);
+  f2Mode = FILE_READ;
 }
 
 void setup() {
@@ -451,15 +468,14 @@ void setup() {
   if (LittleFS.begin()) {
     // Add optional callback notifiers
     ESPhttpUpdate.onEnd(update_finished);
-    deleteAllFiles();
+    logFileName = createLogFileName();
+
+    deleteOldFiles();
 
     mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
     mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
 
-    logFileName = createLogFileName();
-    LittleFS.remove(logFileName);
-    f2 = LittleFS.open(logFileName, "w");
-    //fu = LittleFS.open(logFileName, "w");
+    openFlashFileForAppend();
 
     t1LED = 0;
     t2LED = 0;
@@ -472,6 +488,11 @@ void setup() {
 }
 
 void loop() {
+  if (flushState != prevFlushStateForLog) {
+  String stateMsg = mac + ", flushState changed to: " + String(flushState);
+  mqttClient.publish("rb32/status", 0, true, stateMsg.c_str());
+  prevFlushStateForLog = flushState;
+}
   switch (flushState) {
     case UPDATE_FIRMWARE:
       if (updateFailCount < 1)
@@ -492,16 +513,20 @@ void loop() {
     case READING_FROM_RAM:
       if (WiFi.isConnected() && mqttClient.connected()) {
         publishFromTxQueue();
+
+        if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) == 0 && logsInFlash > 0) {
+          flushState = READING_FROM_FLASH;
+        }
       }
       break;
     case READING_FROM_FLASH:
       if (WiFi.isConnected() && mqttClient.connected()) {
-        String m = mac + ", reading from flash";
-        mqttClient.publish("rb32/status", 0, true, m.c_str());
         dataSyncStartTime = millis();
-        f2.close();
-        f2 = LittleFS.open(logFileName, "r");
-        f2.seek(lastReadPosition);
+
+        if (f2Mode != FILE_READ){
+          openFlashFileForRead();
+        }
+        
         TransferState t = publishFromFlash();
         if (t == TransferState::IN_PROGRESS)
         {
@@ -512,31 +537,58 @@ void loop() {
           flushState = READING_FROM_RAM;
         }
       }
+      else {
+        flushState = READING_FROM_RAM; // if connection is lost the priority switches to clearing txQueue on re-connect
+      }
       break;
     case CHECK_FLASH_FLUSH_STATUS:
-      if (publishFromFlash() == TransferState::COMPLETE)
-      {
-        dataSyncEndTime = millis();
-        String m = mac + ", data sync time " + String(dataSyncEndTime - dataSyncStartTime) + "ms";
-        mqttClient.publish("rb32/status", 0, true, m.c_str());
-        lastReadPosition = f2.position();
-        f2.close();
-        f2 = LittleFS.open(logFileName, "a");
+      if (WiFi.isConnected() && mqttClient.connected()) {
+        if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) > 260)
+        {
+          flushState = READING_FROM_RAM;
+        }
+        else if (publishFromFlash() == TransferState::COMPLETE)
+        {
+          dataSyncEndTime = millis();
+          String m = mac + ", data sync time " + String(dataSyncEndTime - dataSyncStartTime) + "ms";
+          mqttClient.publish("rb32/status", 0, true, m.c_str());
+          lastReadPosition = f2.position();
+          openFlashFileForAppend();
+          flushState = READING_FROM_RAM;
+        }
+      }
+      else {
         flushState = READING_FROM_RAM;
       }
       break;
     case FLUSH_TX_QUEUE:
+      if (f2Mode != FILE_APPEND){
+        openFlashFileForAppend();
+      }
       dumpDataToFlash();
+      break;
+    case DUMP_FLASH:
+      if (WiFi.isConnected() && mqttClient.connected()) {
+        if (f2Mode != FILE_READ) {
+          openFlashFileForRead();
+        }
+        if (publishFromFlash() == TransferState::COMPLETE) {
+          lastReadPosition = f2.position();
+          openFlashFileForAppend();
+          pauseLogging = false;
+          flushState = READING_FROM_RAM;
+        }
+      }
       break;
     default:
       break;
   }
 
-  if (flushState != CHECK_FLASH_FLUSH_STATUS && flushState != READING_FROM_FLASH && flushState != FLUSH_TX_QUEUE && flushState != FLUSH_COUNTERS)
-  {
+  if (!pauseLogging) {
     readAndBufferImuData();
     readAndBufferGpsData();
   }
+
 
   if (calculateBufferSize(txqWritePtr, txqReadPtr, TXQUEUE_SIZE) >= 1396) {
     flushState = FLUSH_TX_QUEUE;
@@ -566,6 +618,7 @@ void publishFromTxQueue() {
     else if (tmpTxqData->typeId == 1) {
       publishGpsData(tmpTxqData->data.gps);
     }
+    lastMessageFromFlash = false;
   }
 }
 
@@ -583,12 +636,15 @@ TransferState publishFromFlash() {
       f2.read();
       if (t.typeId == 0) {
         bytesRead += f2.read((uint8_t *)&t.data.imu, sizeof(ImuData));
+        lastReadPosition = f2.position();
         publishImuData(t.data.imu);
       }
       else if (t.typeId == 1) {
         f2.read((uint8_t *)&t.data.gps, sizeof(GpsData));
+        lastReadPosition = f2.position();
         publishGpsData(t.data.gps);
       }
+      lastMessageFromFlash = true;
       return TransferState::IN_PROGRESS;
     }
     else
@@ -665,6 +721,10 @@ void publishImuData(ImuData& data) {
     lastPacketId = rc;
     lastMessageType = 0;
   }
+  else
+  {
+    mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
+  }
 
   sendNextMessage = false;
 }
@@ -678,6 +738,10 @@ void publishGpsData(GpsData& data) {
   if (rc > 0) {
     lastPacketId = rc;
     lastMessageType = 1;
+  }
+  else
+  {
+    mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
   }
   sendNextMessage = false;
 }
