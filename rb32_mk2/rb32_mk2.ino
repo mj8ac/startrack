@@ -225,48 +225,38 @@ int prevFlushStateForLog = -1;  // -1 ensures the first state always logs
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
 FILE_ACCESS_MODE f2Mode = FILE_UNOPENED;
-//#define PRINT_DEBUG_MSGS
 
 void printDebug(String mac, String msg) {
-#ifdef PRINT_DEBUG_MSGS
-  Serial.println(mac + "," + msg);
   String mqttStr = mac + "," + msg;
   mqttClient.publish("rb32/debug", 0, true, mqttStr.c_str());
-#endif
 }
 
 void connectToWifi() {
-  printDebug(mac, "Connecting to Wi-Fi...");
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setAutoReconnect(false);
 }
 
 void onWifiConnect(const WiFiEventStationModeGotIP& event) {
-  printDebug(mac, "Connected to Wi-Fi.");
   connectToMqtt();
   wifiReconnectTimer.detach();
+  sendNextMessage = true;
 }
 
 void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
-  printDebug(mac, "Disconnected from Wi-Fi.");
   mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
   wifiReconnectTimer.attach(5, connectToWifi);
+  sendNextMessage = false;
 }
 
 void connectToMqtt() {
-  printDebug(mac, "Connecting to MQTT...");
   mqttClient.connect();
 }
 
 void onMqttConnect(bool sessionPresent) {
-  printDebug(mac, "Connected to MQTT.");
-  printDebug(mac, "Session present: ");
-  printDebug(mac, String(sessionPresent));
   uint16_t packetIdSub = mqttClient.subscribe("rb32/debug", 2);
   mqttClient.subscribe("rb32/upload", 0);
   mqttClient.subscribe("rb32/delete/files", 0);
-  printDebug(mac, "Subscribing at QoS 2, packetId: ");
 
   String m;
   m = mac + "," + VERSION + "," + "ONLINE";
@@ -276,25 +266,18 @@ void onMqttConnect(bool sessionPresent) {
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  printDebug(mac, "Disconnected from MQTT.");
-
+  sendNextMessage = false;
   if (WiFi.isConnected()) {
     mqttReconnectTimer.once(2, connectToMqtt);
   }
 }
 
 void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
-  printDebug(mac, "Subscribe acknowledged.");
-  printDebug(mac, "  packetId: ");
-  printDebug(mac, String(packetId));
-  printDebug(mac, "  qos: ");
-  printDebug(mac, String(qos));
+
 }
 
 void onMqttUnsubscribe(uint16_t packetId) {
-  printDebug(mac, "Unsubscribe acknowledged.");
-  printDebug(mac, "  packetId: ");
-  printDebug(mac, String(packetId));
+
 }
 
 void onMqttPublish(uint16_t packetId) {
@@ -442,14 +425,13 @@ void openFlashFileForRead() {
 }
 
 void setup() {
+  connectToWifi();
   Serial.begin(9600);
   Serial.swap();
-  printDebug(mac, "In setup");
-  printDebug(mac, "Still in setup");
   pinMode(LED_BUILTIN, OUTPUT);
   Wire.begin(sda, scl);
   MPU6050_Init();
-
+  
   wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
   wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
 
@@ -460,8 +442,6 @@ void setup() {
   mqttClient.onPublish(onMqttPublish);
   mqttClient.onMessage(onMqttMessage);
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-
-  connectToWifi();
 
   mac = WiFi.macAddress();
 
@@ -521,10 +501,10 @@ void loop() {
       break;
     case READING_FROM_FLASH:
       if (WiFi.isConnected() && mqttClient.connected()) {
-        dataSyncStartTime = millis();
-
+        
         if (f2Mode != FILE_READ){
           openFlashFileForRead();
+          dataSyncStartTime = millis();
         }
         
         TransferState t = publishFromFlash();
@@ -717,16 +697,16 @@ void publishImuData(ImuData& data) {
 
   int rc = mqttClient.publish("imu/data", 1, true, msg);
 
-  if (rc > 0) {
+  if (rc >= 0) {
     lastPacketId = rc;
     lastMessageType = 0;
+    sendNextMessage = false;
   }
   else
   {
+    sendNextMessage = true; // try again
     mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
   }
-
-  sendNextMessage = false;
 }
 
 void publishGpsData(GpsData& data) {
@@ -735,15 +715,17 @@ void publishGpsData(GpsData& data) {
   snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%.4f,%.4f,%u,%u,%.2f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
   int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
 
-  if (rc > 0) {
+  if (rc >= 0) {
     lastPacketId = rc;
     lastMessageType = 1;
+    sendNextMessage = false;
   }
   else
   {
+    sendNextMessage = true; // try again
     mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
   }
-  sendNextMessage = false;
+  
 }
 
 void readAndBufferGpsData() {
