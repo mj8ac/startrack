@@ -246,6 +246,7 @@ void onWifiConnect(const WiFiEventStationModeGotIP& event) {
 void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
   mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
   wifiReconnectTimer.attach(5, connectToWifi);
+  mqttClient.disconnect();
   sendNextMessage = false;
 }
 
@@ -263,12 +264,13 @@ void onMqttConnect(bool sessionPresent) {
   mqttClient.publish("rb32/data/status", 0, true, m.c_str());
   flushState = UPDATE_FIRMWARE;
   sendNextMessage = true;
+  mqttReconnectTimer.detach();
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
   sendNextMessage = false;
   if (WiFi.isConnected()) {
-    mqttReconnectTimer.once(2, connectToMqtt);
+    mqttReconnectTimer.attach(5, connectToMqtt);
   }
 }
 
@@ -697,7 +699,7 @@ void publishImuData(ImuData& data) {
 
   int rc = mqttClient.publish("imu/data", 1, true, msg);
 
-  if (rc >= 0) {
+  if (rc > 0) {
     lastPacketId = rc;
     lastMessageType = 0;
     sendNextMessage = false;
@@ -715,7 +717,7 @@ void publishGpsData(GpsData& data) {
   snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%.4f,%.4f,%u,%u,%.2f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
   int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
 
-  if (rc >= 0) {
+  if (rc > 0) {
     lastPacketId = rc;
     lastMessageType = 1;
     sendNextMessage = false;
