@@ -25,7 +25,7 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 char fLogs[196];
 
-const char* VERSION = "5.1.7";
+const char* VERSION = "6.0.0";
 
 uint8_t gpsTokenPosition = 0;
 
