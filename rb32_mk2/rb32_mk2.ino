@@ -18,7 +18,7 @@
 const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 // --------------------------------------------------------------------
 
-#define MSG_BUFFER_SIZE (196)
+#define MSG_BUFFER_SIZE (512)
 
 char msg[MSG_BUFFER_SIZE];
 
@@ -453,11 +453,11 @@ void setup() {
 }
 
 void loop() {
-   if (flushState != prevFlushStateForLog) {
+/*    if (flushState != prevFlushStateForLog) {
    String stateMsg = mac + ", flushState changed to: " + String(flushState);
    mqttClient.publish("rb32/status", 0, true, stateMsg.c_str());
    prevFlushStateForLog = flushState;
- }
+ } */
   switch (flushState) {
     case UPDATE_FIRMWARE:
       if (updateFailCount < 1)
