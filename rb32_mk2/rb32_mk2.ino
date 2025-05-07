@@ -257,7 +257,7 @@ void onMqttConnect(bool sessionPresent) {
   String m;
   m = mac + "," + VERSION + "," + "ONLINE";
   mqttClient.publish("rb32/data/status", 0, true, m.c_str());
-  m = mac + "," + "OFFLINE";
+  m = mac + "," + VERSION + "," + "OFFLINE";
   mqttClient.setWill("rb32/data/status", 1, true, m.c_str());
   flushState = UPDATE_FIRMWARE;
   sendNextMessage = true;
