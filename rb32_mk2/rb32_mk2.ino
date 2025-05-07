@@ -223,7 +223,7 @@ FILE_ACCESS_MODE f2Mode = FILE_UNOPENED;
 
 void printDebug(String mac, String msg) {
   String mqttStr = mac + "," + msg;
-  mqttClient.publish("rb32/debug", 0, true, mqttStr.c_str());
+  mqttClient.publish("rb32/debug", 0, false, mqttStr.c_str());
 }
 
 void connectToWifi() {
@@ -257,6 +257,8 @@ void onMqttConnect(bool sessionPresent) {
   String m;
   m = mac + "," + VERSION + "," + "ONLINE";
   mqttClient.publish("rb32/data/status", 0, true, m.c_str());
+  m = mac + "," + "OFFLINE";
+  mqttClient.setWill("rb32/data/status", 1, true, m.c_str());
   flushState = UPDATE_FIRMWARE;
   sendNextMessage = true;
   mqttReconnectTimer.detach();
@@ -364,7 +366,7 @@ bool isTxQueueEmpty() {
 
 bool isTxQueueFull() {
   if ((txqWritePtr + 1) % TXQUEUE_SIZE == txqReadPtr) {
-    mqttClient.publish("rb32/imu/debug", 0, true, "Warning! TX Queue Full!");
+    mqttClient.publish("rb32/imu/debug", 0, false, "Warning! TX Queue Full!");
     return true;
   }
   else
@@ -436,9 +438,6 @@ void setup() {
     logFileName = createLogFileName();
 
     deleteOldFiles();
-
-    mqttClient.publish("rb32/debug", 0, true, "LOG FILENAME: ");
-    mqttClient.publish("rb32/debug", 0, true, logFileName.c_str());
 
     openFlashFileForAppend();
 
@@ -516,7 +515,7 @@ void loop() {
         {
           dataSyncEndTime = millis();
           String m = mac + ", data sync time " + String(dataSyncEndTime - dataSyncStartTime) + "ms";
-          mqttClient.publish("rb32/status", 0, true, m.c_str());
+          mqttClient.publish("rb32/status", 0, false, m.c_str());
           lastReadPosition = f2.position();
           openFlashFileForAppend();
           flushState = READING_FROM_RAM;
@@ -689,7 +688,7 @@ bool publishImuData(ImuData& data) {
   dImuMsgId = tmpImuData->msgId;
   snprintf(msg, MSG_BUFFER_SIZE, "{\"mac\":\"%s\",\"Ax\":%+f,\"Ay\":%+f,\"Az\":%f,\"T\":%f,\"Gx\":%+f,\"Gy\":%+f,\"Gz\":%f,\"rssi\":%+d,\"ecg\":%d,\"time\":\"%02d:%02d:%02d.%04u\",\"msgId\":\"%u\"}\r", mac.c_str(), Ax, Ay, Az, T, Gx, Gy, Gz, rssi, 0, dHour, dMin, dSec, timeAge, dImuMsgId);
 
-  int rc = mqttClient.publish("imu/data", 1, true, msg);
+  int rc = mqttClient.publish("imu/data", 1, false, msg);
 
   if (rc > 0) {
     lastPacketId = rc;
@@ -701,7 +700,7 @@ bool publishImuData(ImuData& data) {
   {
     sendNextMessage = true; // try again
     failedPubs++;
-    mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
+    mqttClient.publish("rb32/status", 0, false, "Warning, publish failed.");
     return false;
   }
 
@@ -712,7 +711,7 @@ bool publishGpsData(GpsData& data) {
   GpsData* tmpGpsData = &data;
   char sendBuffer[64];
   snprintf(sendBuffer, sizeof(sendBuffer), "%s,%u,%u,%02u%02u%02u,%.4f,%.4f,%u,%u,%.2f", mac.c_str(), tmpGpsData->msgId, tmpGpsData->fromCache, tmpGpsData->hh, tmpGpsData->mm, tmpGpsData->ss, tmpGpsData->lat, tmpGpsData->lon, tmpGpsData->valid, tmpGpsData->sats, tmpGpsData->hdop);
-  int rc = mqttClient.publish("gps/data", 1, true, sendBuffer);
+  int rc = mqttClient.publish("gps/data", 1, false, sendBuffer);
 
   if (rc > 0) {
     lastPacketId = rc;
@@ -724,7 +723,7 @@ bool publishGpsData(GpsData& data) {
   {
     sendNextMessage = true; // try again
     failedPubs++;
-    mqttClient.publish("rb32/status", 0, true, "Warning, publish failed.");
+    mqttClient.publish("rb32/status", 0, false, "Warning, publish failed.");
     return false;
   }
   
@@ -890,7 +889,7 @@ void flushCounters()
 
   // MAC ID, missed IMU, sent IMU, missed GPS, sent GPS, buffer size, total sent, txq Write ptr, txq Read ptr, logs in flash
   snprintf(buff, sizeof(buff), "%s,%d,%d,%d,%d,%d,%d,%u,%u, %u, %d, %d, %u", mac.c_str(), totalMissedImu, totalSentImu, totalMissedGps, totalSentGps, txBufferSize, totalSent, txqWritePtr, txqReadPtr, logsInFlash, failedPubs, onPubCount, freeMem);
-  mqttClient.publish("rb32/counters", 0, true, buff);
+  mqttClient.publish("rb32/counters", 0, false, buff);
   flushState = prevFlushState;
 }
 
