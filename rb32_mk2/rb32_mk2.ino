@@ -75,6 +75,7 @@ String sMqttGpsMsg;
 String gpsTime;
 String timeAgeStr;
 String logFileName;
+String lwt;
 
 char szDay[3];
 char szMonth[3];
@@ -257,8 +258,6 @@ void onMqttConnect(bool sessionPresent) {
   String m;
   m = mac + "," + VERSION + "," + "ONLINE";
   mqttClient.publish("rb32/data/status", 0, true, m.c_str());
-  m = mac + "," + VERSION + "," + "OFFLINE";
-  mqttClient.setWill("rb32/data/status", 1, true, m.c_str());
   flushState = UPDATE_FIRMWARE;
   sendNextMessage = true;
   mqttReconnectTimer.detach();
@@ -429,7 +428,10 @@ void setup() {
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 
   mac = WiFi.macAddress();
-
+  
+  lwt = mac + "," + VERSION + "," + "OFFLINE";
+  mqttClient.setWill("rb32/data/status", 1, true, lwt.c_str());
+  
   connectToWifi();
   
   if (LittleFS.begin()) {
