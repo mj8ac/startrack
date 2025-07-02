@@ -1,13 +1,9 @@
-#include <ESP8266WiFi.h>
-#include <ESPping.h>
 #include <AsyncMqttClient.h>
 #include <Wire.h>
 #include <TimeLib.h>
-#include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <Ticker.h>
 #include <LittleFS.h>
-#include <FS.h>
 
 // WARNING changing these settings could brick the loggers
 //---------------------------------------------------------------------
