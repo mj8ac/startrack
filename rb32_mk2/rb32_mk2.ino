@@ -385,7 +385,7 @@ String createLogFileName() {
 void deleteOldFiles() {
   Dir dir = LittleFS.openDir("/");  // Open the root directory
   while (dir.next()) {
-    String fileName = dir.fileName();
+    String fileName = "/" + dir.fileName();
         if (fileName != logFileName) { // don't delete today's file in case the esp reboots during a game
     LittleFS.remove(fileName);
         }
@@ -403,6 +403,39 @@ void openFlashFileForRead() {
   f2 = LittleFS.open(logFileName, "r");
   f2.seek(lastReadPosition);
   f2Mode = FILE_READ;
+}
+
+void listDir(const String& path, uint8_t depth = 0)
+{
+  Dir dir = LittleFS.openDir(path);
+  while (dir.next())
+  {
+    // Build full path for printing / deeper traversal
+    String fullPath = path + (path.endsWith("/") ? "" : "/") + dir.fileName();
+
+    // Indentation for tree view
+    for (uint8_t i = 0; i < depth; ++i) Serial.print("  ");
+
+    if (dir.isDirectory())
+    {
+      Serial.printf("[DIR ] %s/\n", fullPath.c_str());
+      // Recurse into sub-directory
+      listDir(fullPath, depth + 1);
+    }
+    else
+    {
+      // Try to get the modification time (needs core ≥3.1.0)
+      time_t modTime = dir.fileTime();
+      char   buf[26] {};
+      ctime_r(&modTime, buf);          // converts to “Wed Jun 30 13:45:26 2025\n”
+      buf[24] = '\0';                  // strip trailing newline
+
+      Serial.printf("[FILE] %s  (%lu B, %s)\n",
+                    fullPath.c_str(),
+                    (unsigned long)dir.fileSize(),
+                    buf);
+    }
+  }
 }
 
 void setup() {
@@ -435,9 +468,20 @@ void setup() {
     ESPhttpUpdate.onEnd(update_finished);
     logFileName = createLogFileName();
 
+//    File f = LittleFS.open("/greeting.txt", "w");  // create / overwrite
+//  if (f) {
+//    f.println("Hello, world!");                  // write a line
+//    f.close();                                  // flush & close
+//  }
+
     deleteOldFiles();
 
     openFlashFileForAppend();
+
+//    Serial.println();
+//  Serial.println("────── LittleFS contents ──────");
+//  listDir("/");
+//  Serial.println("──────────── done ─────────────");
 
     t1LED = 0;
     t2LED = 0;
