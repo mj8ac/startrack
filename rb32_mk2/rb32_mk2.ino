@@ -4,6 +4,7 @@
 #include <ESP8266httpUpdate.h>
 #include <Ticker.h>
 #include <LittleFS.h>
+#include <Arduino_CRC32.h>
 
 // WARNING changing these settings could brick the loggers
 //---------------------------------------------------------------------
@@ -19,6 +20,9 @@ const char* UPDATE_SERVER = "138.68.160.221"; // Digital Ocean Droplet
 char msg[MSG_BUFFER_SIZE];
 
 const char* VERSION = "6.0.7";
+
+static constexpr uint32_t MAGIC   = 0x534E5943;   // "SYNC"
+static constexpr uint16_t SYNC_VERSION = 1;
 
 uint8_t gpsTokenPosition = 0;
 
@@ -149,7 +153,8 @@ enum FLUSH_STATE {
   READING_FROM_FLASH,
   FLUSH_TX_QUEUE,
   CHECK_FLASH_FLUSH_STATUS,
-  DUMP_FLASH
+  DUMP_FLASH, 
+  SHUT_DOWN
 };
 
 enum class TransferState {
@@ -159,7 +164,7 @@ enum class TransferState {
 };
 
 enum FILE_ACCESS_MODE {
-  FILE_UNOPENED,
+  FILE_CLOSED,
   FILE_APPEND,
   FILE_READ
 };
@@ -201,8 +206,20 @@ struct TxQueue {
   } data;
 };
 
+struct SyncState {
+  uint32_t magic;             // 0x534E5943
+  uint16_t version;           // 1
+  uint8_t  flushState;        // user flag
+  char     fileName[40];      // zero-terminated path
+  uint32_t fileOffset;        // next-byte to send
+  uint32_t crc;               // CRC-32 over everything above
+} __attribute__((packed));
+
+
+
 const int TXQUEUE_SIZE = 1100;
 TxQueue txQueue[TXQUEUE_SIZE];
+SyncState syncState;
 
 int gpsReadPtr  = 0;
 int gpsWritePtr = 0;
@@ -216,7 +233,7 @@ int prevFlushStateForLog = -1;  // -1 ensures the first state always logs
 
 FLUSH_STATE flushState = START_UP;
 FLUSH_STATE prevFlushState = DONT_FLUSH;
-FILE_ACCESS_MODE f2Mode = FILE_UNOPENED;
+FILE_ACCESS_MODE f2Mode = FILE_CLOSED;
 
 void printDebug(String mac, String msg) {
   String mqttStr = mac + "," + msg;
@@ -302,6 +319,11 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     flushState =  DUMP_FLASH;
     pauseLogging = true;
   }
+  if (strcmp(topic, "rb32/shutdown") == 0)
+  {
+    flushState = SHUT_DOWN;
+    pauseLogging = true;
+  }
 }
 
 void dumpDataToFlash() {
@@ -312,6 +334,7 @@ void dumpDataToFlash() {
   int elementsToWrite = 0;
   int elementsWritten = 0;
   int confirmedWritten = 0;
+
   if (txqReadPtr < txqWritePtr) {
     // If no wrap-around, write the data in a single operation
     elementsToWrite = txqWritePtr - txqReadPtr;
@@ -438,12 +461,46 @@ void listDir(const String& path, uint8_t depth = 0)
   }
 }
 
+uint32_t calcCrc(const SyncState &s)
+{
+  Arduino_CRC32 crc32;
+  return crc32.calc((uint8_t*)&s, offsetof(SyncState, crc));   // up to crc field
+}
+
+bool loadSync(SyncState &s)
+{
+  File f = LittleFS.open("/sync.bin", "r");
+  if (!f || f.size() != sizeof(SyncState)) return false;
+
+  f.read((uint8_t*)&s, sizeof(SyncState));
+  f.close();
+
+  if (s.magic != MAGIC || s.version != SYNC_VERSION) return false;
+  if (s.crc   != calcCrc(s))                    return false;
+  return true;
+}
+
+bool saveSync(const SyncState &in)
+{
+  SyncState s = in;
+  s.crc = calcCrc(s);   // uses the one-shot calc()
+
+  File f = LittleFS.open("/sync.tmp", "w");
+  if (!f) return false;
+  f.write((uint8_t*)&s, sizeof(s));
+  f.flush(); f.close();
+
+  LittleFS.remove("/sync.bin");
+  return LittleFS.rename("/sync.tmp", "/sync.bin");
+}
+
 void setup() {
   Serial.begin(9600);
   Serial.swap();
   pinMode(LED_BUILTIN, OUTPUT);
   Wire.begin(sda, scl);
   MPU6050_Init();
+  logFileName = "logfile.txt";
   
   wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
   wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
@@ -462,26 +519,33 @@ void setup() {
   mqttClient.setWill("rb32/data/status", 1, true, lwt.c_str());
   
   connectToWifi();
+
+  if (!loadSync(syncState)) {                // couldn’t load → defaults
+    syncState = {};
+    syncState.magic      = MAGIC;
+    syncState.version    = SYNC_VERSION;
+    syncState.flushState = UPDATE_FIRMWARE;
+    strncpy(syncState.fileName, logFileName.c_str(), sizeof(syncState.fileName));
+    syncState.fileOffset = 0;
+    saveSync(syncState);
+  }
+  else {
+    flushState = (FLUSH_STATE)syncState.flushState;
+    if (flushState == SHUT_DOWN) {
+      flushState = DUMP_FLASH; // on restart continue flushing
+      pauseLogging = true // keep logging paused until flush complete
+    }
+    logFileName = String(syncState.fileName);
+    lastReadPosition = syncState.fileOffset;
+  }
   
   if (LittleFS.begin()) {
     // Add optional callback notifiers
     ESPhttpUpdate.onEnd(update_finished);
-    logFileName = createLogFileName();
-
-//    File f = LittleFS.open("/greeting.txt", "w");  // create / overwrite
-//  if (f) {
-//    f.println("Hello, world!");                  // write a line
-//    f.close();                                  // flush & close
-//  }
-
-    deleteOldFiles();
+  
+    //deleteOldFiles();
 
     openFlashFileForAppend();
-
-//    Serial.println();
-//  Serial.println("────── LittleFS contents ──────");
-//  listDir("/");
-//  Serial.println("──────────── done ─────────────");
 
     t1LED = 0;
     t2LED = 0;
@@ -587,6 +651,15 @@ void loop() {
         }
       }
       break;
+      case SHUT_DOWN:
+      if (f2) {
+        f2.close();
+        f2Mode = FILE_CLOSED;
+        syncState.flushState = flushState;
+        syncState.fileOffset = lastReadPosition;
+        saveSync(syncState);
+      }
+      
     default:
       break;
   }
