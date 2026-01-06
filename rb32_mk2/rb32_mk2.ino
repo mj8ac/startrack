@@ -215,8 +215,6 @@ struct SyncState {
   uint32_t crc;               // CRC-32 over everything above
 } __attribute__((packed));
 
-
-
 const int TXQUEUE_SIZE = 1100;
 TxQueue txQueue[TXQUEUE_SIZE];
 SyncState syncState;
@@ -533,7 +531,7 @@ void setup() {
     flushState = (FLUSH_STATE)syncState.flushState;
     if (flushState == SHUT_DOWN) {
       flushState = DUMP_FLASH; // on restart continue flushing
-      pauseLogging = true // keep logging paused until flush complete
+      pauseLogging = true; // keep logging paused until flush complete
     }
     logFileName = String(syncState.fileName);
     lastReadPosition = syncState.fileOffset;
